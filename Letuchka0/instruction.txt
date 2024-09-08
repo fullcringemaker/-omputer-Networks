@@ -1,0 +1,14 @@
+ssh root@185.104.251.226
+root@185.104.251.226's password: fMs0m69gIGQ3
+mkdir 'имя своей папки'
+cd 'имя своей папки'
+nano server.py
+
+python server.py
+
+websocket_client.html
+обновляем страницу 
+
+client say:
+enter answer to client: что-то
+на сайте появляется надпись что-то
