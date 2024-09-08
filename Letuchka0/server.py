@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import asyncio 
+import asyncio
 import websockets
 
 async def hello(websocket, path):
