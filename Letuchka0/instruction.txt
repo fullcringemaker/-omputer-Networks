@@ -11,4 +11,4 @@ websocket_client.html
 
 client say:
 enter answer to client: что-то
-на сайте появляется надпись что-то
+на сайте появляется надпись "что-то"
