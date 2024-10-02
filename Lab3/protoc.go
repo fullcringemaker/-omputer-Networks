@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// Message структура для сообщений между пирам
 type Message struct {
 	ID         string   `json:"id"`
 	Sender     string   `json:"sender"`
@@ -26,27 +27,42 @@ type Message struct {
 	Timestamp  int64    `json:"timestamp"`
 }
 
+// Peer структура для хранения информации о пире
+type Peer struct {
+	Name    string `json:"name"`
+	Address string `json:"address"` // Формат: ip:port
+}
+
 var (
-	peerName         string
-	ownAddress       string
-	ownPort          string
-	nextPeerAddr     string
-	nextPeerPort     string
-	nextPeerConn     net.Conn
-	listener         net.Listener
+	// Информация о текущем пире
+	peerName   string
+	ownAddress string
+	ownPort    string
+
+	// Информация о следующем пире в кольце
+	nextPeerAddr string
+	nextPeerPort string
+	nextPeerConn net.Conn
+
+	// Слушатель для входящих соединений
+	listener net.Listener
+
+	// Список полученных сообщений
 	receivedMessages []Message
 	messageMutex     sync.Mutex
-	logMutex         sync.Mutex
-	consoleMutex     sync.Mutex
 
-	// WebSocket related variables
+	// Мьютексы для логирования и консоли
+	logMutex     sync.Mutex
+	consoleMutex sync.Mutex
+
+	// WebSocket переменные
 	clients      = make(map[*websocket.Conn]bool)
 	clientsMutex sync.Mutex
 	upgrader     = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
-	// List of all peers
+	// Список всех пиров в сети
 	allPeers = []Peer{
 		{Name: "Peer1", Address: "185.104.251.226:9765"},
 		{Name: "Peer2", Address: "185.102.139.161:9765"},
@@ -55,14 +71,10 @@ var (
 	}
 )
 
-type Peer struct {
-	Name    string `json:"name"`
-	Address string `json:"address"`
-}
-
 func main() {
 	reader := bufio.NewReader(os.Stdin)
 
+	// Ввод имени пира
 	fmt.Print("Name: ")
 	peerNameInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -71,6 +83,7 @@ func main() {
 	}
 	peerName = strings.TrimSpace(peerNameInput)
 
+	// Ввод собственного IP и порта
 	fmt.Print("Enter your IP address and port (ip:port): ")
 	ownAddrInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -79,6 +92,7 @@ func main() {
 	}
 	ownAddr := strings.TrimSpace(ownAddrInput)
 
+	// Ввод IP и порта следующего пира
 	fmt.Print("Enter next peer IP address and port (ip:port): ")
 	nextPeerAddrPortInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -87,6 +101,7 @@ func main() {
 	}
 	nextPeerAddrPort := strings.TrimSpace(nextPeerAddrPortInput)
 
+	// Разделение IP и порта для собственного адреса
 	ownAddressPort := strings.Split(ownAddr, ":")
 	if len(ownAddressPort) != 2 {
 		fmt.Println("Invalid own IP address and port format. Expected format ip:port")
@@ -95,6 +110,7 @@ func main() {
 	ownAddress = ownAddressPort[0]
 	ownPort = ownAddressPort[1]
 
+	// Разделение IP и порта для следующего пира
 	nextPeerAddressPort := strings.Split(nextPeerAddrPort, ":")
 	if len(nextPeerAddressPort) != 2 {
 		fmt.Println("Invalid next peer IP address and port format. Expected format ip:port")
@@ -103,21 +119,23 @@ func main() {
 	nextPeerAddr = nextPeerAddressPort[0]
 	nextPeerPort = nextPeerAddressPort[1]
 
+	// Инициализация логирования
 	initLogging()
 
-	// Start WebSocket server
+	// Запуск Web-сервера
 	go startWebServer()
 
-	// Start listening for P2P connections
+	// Запуск слушателя для P2P соединений
 	go startListening()
 
-	// Connect to next peer
+	// Подключение к следующему пире
 	go connectToNextPeer()
 
-	// Handle user commands
+	// Обработка пользовательских команд
 	handleCommands()
 }
 
+// initLogging инициализирует логирование в файл с именем пира
 func initLogging() {
 	logFile, err := os.OpenFile(fmt.Sprintf("%s.log", peerName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
@@ -129,6 +147,78 @@ func initLogging() {
 	logEvent("Peer %s started. Listening on %s:%s", peerName, ownAddress, ownPort)
 }
 
+// startWebServer запускает HTTP и WebSocket серверы
+func startWebServer() {
+	http.HandleFunc("/", serveHome)
+	http.HandleFunc("/ws", handleWebSocket)
+	addr := "0.0.0.0:9651" // Слушать на всех интерфейсах
+	logEvent("Starting web server on %s", addr)
+	err := http.ListenAndServe(addr, nil)
+	if err != nil {
+		logError("Web server failed: %v", err)
+	}
+}
+
+// serveHome обслуживает файл index.html
+func serveHome(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "index.html")
+}
+
+// handleWebSocket обрабатывает WebSocket соединения
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logError("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer ws.Close()
+
+	// Регистрация клиента
+	clientsMutex.Lock()
+	clients[ws] = true
+	clientsMutex.Unlock()
+
+	// Отправка текущего состояния клиенту
+	messageMutex.Lock()
+	initialMessages := make([]Message, len(receivedMessages))
+	copy(initialMessages, receivedMessages)
+	messageMutex.Unlock()
+
+	for _, msg := range initialMessages {
+		err := ws.WriteJSON(msg)
+		if err != nil {
+			logError("WebSocket write error: %v", err)
+			return
+		}
+	}
+
+	// Поддержание соединения открытым
+	for {
+		_, _, err := ws.ReadMessage()
+		if err != nil {
+			clientsMutex.Lock()
+			delete(clients, ws)
+			clientsMutex.Unlock()
+			break
+		}
+	}
+}
+
+// broadcastMessage отправляет сообщение всем подключенным WebSocket клиентам
+func broadcastMessage(msg *Message) {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
+	for client := range clients {
+		err := client.WriteJSON(msg)
+		if err != nil {
+			logError("WebSocket broadcast error: %v", err)
+			client.Close()
+			delete(clients, client)
+		}
+	}
+}
+
+// startListening запускает слушатель для входящих P2P соединений
 func startListening() {
 	addr := ownAddress + ":" + ownPort
 	var err error
@@ -149,6 +239,7 @@ func startListening() {
 	}
 }
 
+// handleConnection обрабатывает входящее P2P соединение
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
@@ -175,6 +266,7 @@ func handleConnection(conn net.Conn) {
 	}
 }
 
+// validateMessage проверяет корректность полученного сообщения
 func validateMessage(msg *Message) error {
 	if msg.ID == "" {
 		return errors.New("message ID is empty")
@@ -197,6 +289,7 @@ func validateMessage(msg *Message) error {
 	return nil
 }
 
+// receiveMessage обрабатывает полученное сообщение
 func receiveMessage(msg *Message) {
 	logEvent("Received message %s from %s", msg.ID, msg.Sender)
 
@@ -208,6 +301,7 @@ func receiveMessage(msg *Message) {
 	messageMutex.Lock()
 	defer messageMutex.Unlock()
 
+	// Проверка на дубликаты
 	for _, m := range receivedMessages {
 		if m.ID == msg.ID {
 			logEvent("Already received message %s. Discarding.", msg.ID)
@@ -215,39 +309,30 @@ func receiveMessage(msg *Message) {
 		}
 	}
 
-	// Check if the message is intended for this peer
-	isForUs := false
+	// Добавление сообщения в список полученных
+	receivedMessages = append(receivedMessages, *msg)
+
+	// Отправка сообщения в WebSocket
+	broadcastMessage(&msg)
+
+	// Логирование и отображение в консоли
 	for _, recipient := range msg.Recipients {
-		if recipient == peerName {
-			isForUs = true
-			break
-		}
-	}
+		for _, peer := range allPeers {
+			if recipient == peer.Name {
+				logEvent("Message %s is for %s. Handling.", msg.ID, recipient)
 
-	if isForUs {
-		receivedMessages = append(receivedMessages, *msg)
-		logEvent("Message %s is for us. Handling.", msg.ID)
-
-		// Broadcast to WebSocket clients
-		broadcastMessage(msg)
-
-		consoleMutex.Lock()
-		fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
-		fmt.Print("Enter command: ")
-		consoleMutex.Unlock()
-
-		// Remove this peer from recipients
-		newRecipients := []string{}
-		for _, recipient := range msg.Recipients {
-			if recipient != peerName {
-				newRecipients = append(newRecipients, recipient)
+				consoleMutex.Lock()
+				fmt.Printf("\nReceived message from %s to %s: %s\n", msg.Sender, recipient, msg.Content)
+				fmt.Print("Enter command: ")
+				consoleMutex.Unlock()
 			}
 		}
-		msg.Recipients = newRecipients
 	}
 
+	// Увеличение счетчика переходов
 	msg.HopCount++
 
+	// Если сообщение все еще имеет получателей, переслать дальше
 	if len(msg.Recipients) > 0 {
 		forwardMessage(msg)
 	} else {
@@ -255,6 +340,7 @@ func receiveMessage(msg *Message) {
 	}
 }
 
+// forwardMessage пересылает сообщение следующему пире в кольце
 func forwardMessage(msg *Message) {
 	if nextPeerConn == nil {
 		go connectToNextPeer()
@@ -274,25 +360,27 @@ func forwardMessage(msg *Message) {
 			nextPeerConn = nil
 			return
 		}
-		logEvent("Forwarded message %s to %s:%s", msg.ID, nextPeerAddr, nextPeerPort)
+		logEvent("Forwarded message %s to %s", msg.ID, nextPeerAddr)
 	}
 }
 
+// connectToNextPeer устанавливает соединение с следующим пиром в кольце
 func connectToNextPeer() {
 	for {
 		addr := nextPeerAddr + ":" + nextPeerPort
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			logError("Failed to connect to next peer %s:%s: %v. Retrying in 5 seconds.", nextPeerAddr, nextPeerPort, err)
+			logError("Failed to connect to next peer %s: %v. Retrying in 5 seconds.", addr, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		nextPeerConn = conn
-		logEvent("Connected to next peer %s:%s", nextPeerAddr, nextPeerPort)
+		logEvent("Connected to next peer %s", addr)
 		return
 	}
 }
 
+// handleCommands обрабатывает пользовательские команды
 func handleCommands() {
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -330,6 +418,7 @@ func handleCommands() {
 	}
 }
 
+// sendMessage создает и отправляет сообщение
 func sendMessage(recipients []string, content string) {
 	msg := Message{
 		ID:         generateMessageID(),
@@ -344,10 +433,12 @@ func sendMessage(recipients []string, content string) {
 	forwardMessage(&msg)
 }
 
+// generateMessageID генерирует уникальный идентификатор сообщения
 func generateMessageID() string {
 	return fmt.Sprintf("%s-%d", peerName, time.Now().UnixNano())
 }
 
+// printReceivedMessages выводит все полученные сообщения
 func printReceivedMessages() {
 	messageMutex.Lock()
 	defer messageMutex.Unlock()
@@ -361,83 +452,16 @@ func printReceivedMessages() {
 	}
 }
 
+// logEvent записывает событие в лог
 func logEvent(format string, v ...interface{}) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
 	log.Printf("EVENT: "+format, v...)
 }
 
+// logError записывает ошибку в лог
 func logError(format string, v ...interface{}) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
 	log.Printf("ERROR: "+format, v...)
-}
-
-func startWebServer() {
-	http.HandleFunc("/", serveHome)
-	http.HandleFunc("/ws", handleWebSocket)
-	addr := "0.0.0.0:9651"
-	logEvent("Starting web server on %s", addr)
-	err := http.ListenAndServe(addr, nil)
-	if err != nil {
-		logError("Web server failed: %v", err)
-	}
-}
-
-func serveHome(w http.ResponseWriter, r *http.Request) {
-	// Serve the index.html file
-	http.ServeFile(w, r, "index.html")
-}
-
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Upgrade initial GET request to a WebSocket
-	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		logError("WebSocket upgrade failed: %v", err)
-		return
-	}
-	defer ws.Close()
-
-	// Register client
-	clientsMutex.Lock()
-	clients[ws] = true
-	clientsMutex.Unlock()
-
-	// Send current state to the new client
-	messageMutex.Lock()
-	initialMessages := make([]Message, len(receivedMessages))
-	copy(initialMessages, receivedMessages)
-	messageMutex.Unlock()
-
-	for _, msg := range initialMessages {
-		err := ws.WriteJSON(msg)
-		if err != nil {
-			logError("WebSocket write error: %v", err)
-			return
-		}
-	}
-
-	// Keep the connection open
-	for {
-		_, _, err := ws.ReadMessage()
-		if err != nil {
-			clientsMutex.Lock()
-			delete(clients, ws)
-			clientsMutex.Unlock()
-			break
-		}
-	}
-}
-
-func broadcastMessage(msg *Message) {
-	clientsMutex.Lock()
-	defer clientsMutex.Unlock()
-	for client := range clients {
-		err := client.WriteJSON(msg)
-		if err != nil {
-			logError("WebSocket broadcast error: %v", err)
-			client.Close()
-			delete(clients, client)
-		}
-	}
 }
