@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket" // Убедитесь, что пакет установлен
 	"io"
 	"log"
 	"net"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Структура сообщения
@@ -27,12 +28,7 @@ type Message struct {
 	Timestamp  int64    `json:"timestamp"`
 }
 
-// Структура пиринга
-type Peer struct {
-	Name    string
-	Address string // Формат ip:port
-}
-
+// Глобальные переменные для P2P
 var (
 	peerName         string
 	ownAddress       string
@@ -45,33 +41,26 @@ var (
 	messageMutex     sync.Mutex
 	logMutex         sync.Mutex
 	consoleMutex     sync.Mutex
-
-	// Список всех пиров в сети
-	allPeers = []Peer{
-		{Name: "Peer1", Address: "185.104.251.226:9765"},
-		{Name: "Peer2", Address: "185.102.139.161:9765"},
-		{Name: "Peer3", Address: "185.102.139.168:9765"},
-		{Name: "Peer4", Address: "185.102.139.169:9765"},
-	}
-
-	// WebSocket
-	upgrader      = websocket.Upgrader{}
-	clients       = make(map[*websocket.Conn]bool)
-	clientsMutex  sync.Mutex
-	broadcastChan = make(chan WSMessage)
 )
 
-// Структура сообщения для WebSocket
+// Глобальные переменные для WebSocket
+var (
+	upgrader      = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsClients     = make(map[*websocket.Conn]bool)
+	clientsMutex  sync.Mutex
+	broadcastChan  = make(chan Message)
+)
+
+// Структура для передачи сообщений в WebSocket
 type WSMessage struct {
-	Destination string `json:"destination"`
-	Content     string `json:"content"`
-	Sender      string `json:"sender"`
+	Recipient string `json:"recipient"`
+	Sender    string `json:"sender"`
+	Content   string `json:"content"`
 }
 
 func main() {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Ввод имени пира
 	fmt.Print("Name: ")
 	peerNameInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -80,7 +69,6 @@ func main() {
 	}
 	peerName = strings.TrimSpace(peerNameInput)
 
-	// Ввод собственного IP и порта
 	fmt.Print("Enter your IP address and port (ip:port): ")
 	ownAddrInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -89,7 +77,6 @@ func main() {
 	}
 	ownAddr := strings.TrimSpace(ownAddrInput)
 
-	// Ввод следующего пира
 	fmt.Print("Enter next peer IP address and port (ip:port): ")
 	nextPeerAddrPortInput, err := reader.ReadString('\n')
 	if err != nil {
@@ -98,7 +85,6 @@ func main() {
 	}
 	nextPeerAddrPort := strings.TrimSpace(nextPeerAddrPortInput)
 
-	// Разделение собственного адреса и порта
 	ownAddressPort := strings.Split(ownAddr, ":")
 	if len(ownAddressPort) != 2 {
 		fmt.Println("Invalid own IP address and port format. Expected format ip:port")
@@ -107,7 +93,6 @@ func main() {
 	ownAddress = ownAddressPort[0]
 	ownPort = ownAddressPort[1]
 
-	// Разделение адреса и порта следующего пира
 	nextPeerAddressPort := strings.Split(nextPeerAddrPort, ":")
 	if len(nextPeerAddressPort) != 2 {
 		fmt.Println("Invalid next peer IP address and port format. Expected format ip:port")
@@ -116,26 +101,25 @@ func main() {
 	nextPeerAddr = nextPeerAddressPort[0]
 	nextPeerPort = nextPeerAddressPort[1]
 
-	// Инициализация логирования
 	initLogging()
 
-	// Запуск HTTP сервера для веб-интерфейса
+	// Запуск HTTP-сервера
 	go startHTTPServer()
 
-	// Запуск прослушивания входящих соединений
+	// Запуск P2P-слушателя
 	go startListening()
 
-	// Подключение к следующему пирру
+	// Подключение к следующему пиру
 	go connectToNextPeer()
 
 	// Обработка команд из консоли
 	handleCommands()
 
-	// Обработка сообщений для WebSocket
+	// Запуск обработчика трансляции сообщений в WebSocket
 	go handleBroadcast()
 }
 
-// Инициализация логирования в файл
+// Инициализация логирования
 func initLogging() {
 	logFile, err := os.OpenFile(fmt.Sprintf("%s.log", peerName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
@@ -147,82 +131,61 @@ func initLogging() {
 	logEvent("Peer %s started. Listening on %s:%s", peerName, ownAddress, ownPort)
 }
 
-// Запуск HTTP сервера
+// Запуск HTTP-сервера
 func startHTTPServer() {
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", handleWebSocket)
 
-	addr := "0.0.0.0:9651"
+	addr := ownAddress + ":9651"
 	logEvent("Starting HTTP server on %s", addr)
 	err := http.ListenAndServe(addr, nil)
 	if err != nil {
-		logError("HTTP server failed: %v", err)
+		logError("Failed to start HTTP server: %v", err)
 		os.Exit(1)
 	}
 }
 
 // Обработчик главной страницы
 func serveHome(w http.ResponseWriter, r *http.Request) {
-	// Разрешить все источники для упрощения
-	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
-
-	if r.URL.Path != "/" {
-		http.Error(w, "Not Found", http.StatusNotFound)
-		return
-	}
-
 	http.ServeFile(w, r, "index.html")
 }
 
 // Обработчик WebSocket соединений
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Разрешить все источники для упрощения
-	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
-
-	ws, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logError("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer ws.Close()
+	defer conn.Close()
 
+	// Добавление клиента в список
 	clientsMutex.Lock()
-	clients[ws] = true
+	wsClients[conn] = true
 	clientsMutex.Unlock()
 
-	logEvent("WebSocket client connected: %s", ws.RemoteAddr().String())
+	logEvent("New WebSocket client connected: %s", conn.RemoteAddr().String())
 
-	// Блокируем до закрытия соединения
+	// Ожидание закрытия соединения
 	for {
-		_, _, err := ws.ReadMessage()
+		_, _, err := conn.ReadMessage()
 		if err != nil {
-			clientsMutex.Lock()
-			delete(clients, ws)
-			clientsMutex.Unlock()
-			logEvent("WebSocket client disconnected: %s", ws.RemoteAddr().String())
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				logError("WebSocket read error: %v", err)
+			}
 			break
 		}
 	}
+
+	// Удаление клиента из списка при закрытии
+	clientsMutex.Lock()
+	delete(wsClients, conn)
+	clientsMutex.Unlock()
+
+	logEvent("WebSocket client disconnected: %s", conn.RemoteAddr().String())
 }
 
-// Обработка сообщений для отправки в WebSocket
-func handleBroadcast() {
-	for {
-		msg := <-broadcastChan
-		clientsMutex.Lock()
-		for client := range clients {
-			err := client.WriteJSON(msg)
-			if err != nil {
-				logError("WebSocket write error: %v", err)
-				client.Close()
-				delete(clients, client)
-			}
-		}
-		clientsMutex.Unlock()
-	}
-}
-
-// Запуск прослушивания входящих TCP соединений
+// Обработка P2P соединений
 func startListening() {
 	addr := ownAddress + ":" + ownPort
 	var err error
@@ -243,7 +206,7 @@ func startListening() {
 	}
 }
 
-// Обработка входящего TCP соединения
+// Обработка входящего соединения
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
@@ -270,7 +233,7 @@ func handleConnection(conn net.Conn) {
 	}
 }
 
-// Валидация сообщения
+// Проверка валидности сообщения
 func validateMessage(msg *Message) error {
 	if msg.ID == "" {
 		return errors.New("message ID is empty")
@@ -293,7 +256,7 @@ func validateMessage(msg *Message) error {
 	return nil
 }
 
-// Обработка принятого сообщения
+// Обработка полученного сообщения
 func receiveMessage(msg *Message) {
 	logEvent("Received message %s from %s", msg.ID, msg.Sender)
 
@@ -314,7 +277,6 @@ func receiveMessage(msg *Message) {
 
 	receivedMessages = append(receivedMessages, *msg)
 
-	// Проверка, предназначено ли сообщение этому пиру
 	for i, recipient := range msg.Recipients {
 		if recipient == peerName {
 			logEvent("Message %s is for us. Handling.", msg.ID)
@@ -324,21 +286,17 @@ func receiveMessage(msg *Message) {
 			fmt.Print("Enter command: ")
 			consoleMutex.Unlock()
 
-			// Удаление получателя из списка
+			// Отправка сообщения в WebSocket
+			wsMsg := WSMessage{
+				Recipient: peerName,
+				Sender:    msg.Sender,
+				Content:   msg.Content,
+			}
+			broadcastChan <- msg
+
+			// Удаление текущего получателя из списка
 			msg.Recipients = append(msg.Recipients[:i], msg.Recipients[i+1:]...)
 			break
-		}
-	}
-
-	// Отправка сообщения в WebSocket
-	for _, recipient := range msg.Recipients {
-		if peerInfo, ok := getPeerByName(recipient); ok {
-			wsMsg := WSMessage{
-				Destination: fmt.Sprintf("%s (%s)", peerInfo.Name, peerInfo.Address),
-				Content:     msg.Content,
-				Sender:      msg.Sender,
-			}
-			broadcastChan <- wsMsg
 		}
 	}
 
@@ -351,7 +309,7 @@ func receiveMessage(msg *Message) {
 	}
 }
 
-// Отправка сообщения следующему пирру
+// Отправка сообщения через P2P
 func forwardMessage(msg *Message) {
 	if nextPeerConn == nil {
 		connectToNextPeer()
@@ -376,7 +334,7 @@ func forwardMessage(msg *Message) {
 	}
 }
 
-// Подключение к следующему пирру
+// Подключение к следующему пиру
 func connectToNextPeer() {
 	for {
 		addr := nextPeerAddr + ":" + nextPeerPort
@@ -445,12 +403,12 @@ func sendMessage(recipients []string, content string) {
 	forwardMessage(&msg)
 }
 
-// Генерация уникального ID для сообщения
+// Генерация уникального ID сообщения
 func generateMessageID() string {
 	return fmt.Sprintf("%s-%d", peerName, time.Now().UnixNano())
 }
 
-// Вывод полученных сообщений
+// Печать полученных сообщений
 func printReceivedMessages() {
 	messageMutex.Lock()
 	defer messageMutex.Unlock()
@@ -478,12 +436,31 @@ func logError(format string, v ...interface{}) {
 	log.Printf("ERROR: "+format, v...)
 }
 
-// Получение информации о пире по имени
-func getPeerByName(name string) (Peer, bool) {
-	for _, peer := range allPeers {
-		if peer.Name == name {
-			return peer, true
+// Обработка трансляции сообщений в WebSocket
+func handleBroadcast() {
+	for {
+		msg := <-broadcastChan
+		wsMsg := WSMessage{
+			Recipient: peerName,
+			Sender:    msg.Sender,
+			Content:   msg.Content,
 		}
+		messageBytes, err := json.Marshal(wsMsg)
+		if err != nil {
+			logError("Failed to marshal WSMessage: %v", err)
+			continue
+		}
+		messageStr := string(messageBytes)
+
+		clientsMutex.Lock()
+		for client := range wsClients {
+			err := client.WriteMessage(websocket.TextMessage, []byte(messageStr))
+			if err != nil {
+				logError("WebSocket write error: %v", err)
+				client.Close()
+				delete(wsClients, client)
+			}
+		}
+		clientsMutex.Unlock()
 	}
-	return Peer{}, false
 }
