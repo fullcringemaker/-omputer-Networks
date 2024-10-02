@@ -28,6 +28,13 @@ type Message struct {
 	Timestamp  int64    `json:"timestamp"`
 }
 
+// Структура для передачи сообщений в WebSocket
+type WSMessage struct {
+	Recipient string `json:"recipient"`
+	Sender    string `json:"sender"`
+	Content   string `json:"content"`
+}
+
 // Глобальные переменные для P2P
 var (
 	peerName         string
@@ -48,15 +55,8 @@ var (
 	upgrader      = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	wsClients     = make(map[*websocket.Conn]bool)
 	clientsMutex  sync.Mutex
-	broadcastChan  = make(chan Message)
+	broadcastChan = make(chan WSMessage)
 )
-
-// Структура для передачи сообщений в WebSocket
-type WSMessage struct {
-	Recipient string `json:"recipient"`
-	Sender    string `json:"sender"`
-	Content   string `json:"content"`
-}
 
 func main() {
 	reader := bufio.NewReader(os.Stdin)
@@ -112,11 +112,11 @@ func main() {
 	// Подключение к следующему пиру
 	go connectToNextPeer()
 
-	// Обработка команд из консоли
-	handleCommands()
-
 	// Запуск обработчика трансляции сообщений в WebSocket
 	go handleBroadcast()
+
+	// Обработка команд из консоли
+	handleCommands()
 }
 
 // Инициализация логирования
@@ -286,13 +286,13 @@ func receiveMessage(msg *Message) {
 			fmt.Print("Enter command: ")
 			consoleMutex.Unlock()
 
-			// Отправка сообщения в WebSocket
+			// Создание WSMessage и отправка в канал broadcast
 			wsMsg := WSMessage{
 				Recipient: peerName,
 				Sender:    msg.Sender,
 				Content:   msg.Content,
 			}
-			broadcastChan <- msg
+			broadcastChan <- wsMsg
 
 			// Удаление текущего получателя из списка
 			msg.Recipients = append(msg.Recipients[:i], msg.Recipients[i+1:]...)
@@ -312,7 +312,9 @@ func receiveMessage(msg *Message) {
 // Отправка сообщения через P2P
 func forwardMessage(msg *Message) {
 	if nextPeerConn == nil {
-		connectToNextPeer()
+		go connectToNextPeer()
+		// Подождать некоторое время для установления соединения
+		time.Sleep(1 * time.Second)
 	}
 	if nextPeerConn != nil {
 		msgBytes, err := json.Marshal(msg)
@@ -440,12 +442,7 @@ func logError(format string, v ...interface{}) {
 func handleBroadcast() {
 	for {
 		msg := <-broadcastChan
-		wsMsg := WSMessage{
-			Recipient: peerName,
-			Sender:    msg.Sender,
-			Content:   msg.Content,
-		}
-		messageBytes, err := json.Marshal(wsMsg)
+		messageBytes, err := json.Marshal(msg)
 		if err != nil {
 			logError("Failed to marshal WSMessage: %v", err)
 			continue
