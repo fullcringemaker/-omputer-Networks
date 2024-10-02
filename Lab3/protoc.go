@@ -20,7 +20,7 @@ import (
 // Message структура сообщения
 type Message struct {
 	ID             string   `json:"id"`
-	Type           string   `json:"type"` // 'message' или 'notification'
+	Type           string   `json:"type"`
 	Sender         string   `json:"sender"` // Для 'message': отправитель; Для 'notification': пир, отправивший уведомление
 	SenderIP       string   `json:"sender_ip"` // IP отправителя или пира, отправившего уведомление
 	SenderPort     string   `json:"sender_port"` // Порт отправителя или пира, отправившего уведомление
