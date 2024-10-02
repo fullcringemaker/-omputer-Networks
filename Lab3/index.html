@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <title>Пиринговая Почтовая Служба</title>
@@ -9,21 +9,31 @@
     <h2>Список Пиров:</h2>
     <ul id="peerList">
         <li>Peer1 - 185.104.251.226:9765
-            <ul id="Peer1"></ul>
+            <ul id="Peer1">
+                <!-- Сообщения для Peer1 будут здесь -->
+            </ul>
         </li>
         <li>Peer2 - 185.102.139.161:9765
-            <ul id="Peer2"></ul>
+            <ul id="Peer2">
+                <!-- Сообщения для Peer2 будут здесь -->
+            </ul>
         </li>
         <li>Peer3 - 185.102.139.168:9765
-            <ul id="Peer3"></ul>
+            <ul id="Peer3">
+                <!-- Сообщения для Peer3 будут здесь -->
+            </ul>
         </li>
         <li>Peer4 - 185.102.139.169:9765
-            <ul id="Peer4"></ul>
+            <ul id="Peer4">
+                <!-- Сообщения для Peer4 будут здесь -->
+            </ul>
         </li>
     </ul>
 
     <script>
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        // Устанавливаем WebSocket соединение
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
 
         ws.onopen = function() {
             console.log("WebSocket connection established.");
@@ -31,22 +41,28 @@
 
         ws.onmessage = function(event) {
             const msg = JSON.parse(event.data);
-            const recipient = msg.Recipients.find(r => r === `<?php echo $peerName; ?>`) || msg.Recipients[0];
-            addMessage(msg, recipient);
+            addMessage(msg);
         };
 
         ws.onclose = function() {
             console.log("WebSocket connection closed.");
         };
 
-        function addMessage(msg, recipient) {
-            const recipientList = document.getElementById(recipient);
-            if (recipientList) {
-                const li = document.createElement("li");
-                const date = new Date(msg.Timestamp * 1000);
-                li.textContent = `From: ${msg.Sender} - ${msg.Content} (${date.toLocaleString()})`;
-                recipientList.appendChild(li);
-            }
+        /**
+         * Добавляет сообщение в соответствующий раздел пира
+         * @param {Object} msg - Полученное сообщение
+         */
+        function addMessage(msg) {
+            // Проходимся по всем получателям сообщения
+            msg.Recipients.forEach(function(recipient) {
+                const recipientList = document.getElementById(recipient);
+                if (recipientList) {
+                    const li = document.createElement("li");
+                    const date = new Date(msg.Timestamp * 1000);
+                    li.textContent = `From: ${msg.Sender} - ${msg.Content} (${date.toLocaleString()})`;
+                    recipientList.appendChild(li);
+                }
+            });
         }
     </script>
 </body>
