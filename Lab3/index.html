@@ -1,68 +1,91 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Пиринговая Почтовая Служба</title>
+    <title>Одноранговая Почтовая Служба</title>
 </head>
 <body>
-    <h1>Пиринговая Почтовая Служба</h1>
-    <h2>Список Пиров:</h2>
-    <ul id="peerList">
-        <li>Peer1 - 185.104.251.226:9765
-            <ul id="Peer1">
-                <!-- Сообщения для Peer1 будут здесь -->
-            </ul>
-        </li>
-        <li>Peer2 - 185.102.139.161:9765
-            <ul id="Peer2">
-                <!-- Сообщения для Peer2 будут здесь -->
-            </ul>
-        </li>
-        <li>Peer3 - 185.102.139.168:9765
-            <ul id="Peer3">
-                <!-- Сообщения для Peer3 будут здесь -->
-            </ul>
-        </li>
-        <li>Peer4 - 185.102.139.169:9765
-            <ul id="Peer4">
-                <!-- Сообщения для Peer4 будут здесь -->
-            </ul>
-        </li>
-    </ul>
+    <h1>Одноранговая Почтовая Служба</h1>
+    <div id="peersContainer"></div>
 
     <script>
-        // Устанавливаем WebSocket соединение
+        const peersContainer = document.getElementById('peersContainer');
+
+        // Подключение к WebSocket
         const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
 
-        ws.onopen = function() {
-            console.log("WebSocket connection established.");
+        // Хранилище пиров и их сообщений
+        const peers = {};
+
+        ws.onopen = () => {
+            console.log('WebSocket подключен');
         };
 
-        ws.onmessage = function(event) {
-            const msg = JSON.parse(event.data);
-            addMessage(msg);
-        };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const allReceivedMessages = data.allReceivedMessages;
+            const peerInfo = data.peerInfo;
 
-        ws.onclose = function() {
-            console.log("WebSocket connection closed.");
-        };
-
-        /**
-         * Добавляет сообщение в соответствующий раздел пира
-         * @param {Object} msg - Полученное сообщение
-         */
-        function addMessage(msg) {
-            // Проходимся по всем получателям сообщения
-            msg.Recipients.forEach(function(recipient) {
-                const recipientList = document.getElementById(recipient);
-                if (recipientList) {
-                    const li = document.createElement("li");
-                    const date = new Date(msg.Timestamp * 1000);
-                    li.textContent = `From: ${msg.Sender} - ${msg.Content} (${date.toLocaleString()})`;
-                    recipientList.appendChild(li);
+            // Обновляем локальное хранилище
+            for (const [recipientPeerName, messages] of Object.entries(allReceivedMessages)) {
+                if (!peers[recipientPeerName]) {
+                    peers[recipientPeerName] = {
+                        name: recipientPeerName,
+                        ipPort: peerInfo[recipientPeerName] || "Unknown",
+                        messages: []
+                    };
                 }
-            });
+                // Обновляем список сообщений
+                peers[recipientPeerName].messages = messages.map(msg => ({
+                    sender: msg.sender,
+                    content: msg.content
+                }));
+
+                // Обновляем ipPort, если он известен
+                if (peers[recipientPeerName].ipPort === "Unknown" && peerInfo[recipientPeerName]) {
+                    peers[recipientPeerName].ipPort = peerInfo[recipientPeerName];
+                }
+            }
+
+            // Обновляем веб-интерфейс
+            renderPeers();
+        };
+
+        ws.onclose = () => {
+            console.log('WebSocket отключен');
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket ошибка:', error);
+        };
+
+        // Функция для рендеринга пиров и сообщений
+        function renderPeers() {
+            peersContainer.innerHTML = ""; // Очистка контейнера
+
+            for (const [peerName, peerData] of Object.entries(peers)) {
+                const peerDiv = document.createElement('div');
+                peerDiv.id = `peer-${peerName}`; // Уникальный ID для каждого пира
+
+                // Название пира и его IP:порт
+                const title = document.createElement('h2');
+                title.textContent = `Пир: ${peerData.name} (${peerData.ipPort})`;
+                peerDiv.appendChild(title);
+
+                // Список сообщений
+                const messagesList = document.createElement('ul');
+
+                peerData.messages.forEach(msg => {
+                    const messageItem = document.createElement('li');
+                    messageItem.textContent = `От: ${msg.sender}\nСообщение: ${msg.content}`;
+                    messagesList.appendChild(messageItem);
+                });
+
+                peerDiv.appendChild(messagesList);
+                peersContainer.appendChild(peerDiv);
+            }
         }
     </script>
 </body>
