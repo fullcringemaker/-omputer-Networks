@@ -1,103 +1,51 @@
-<!-- index.html -->
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Одноранговая Почтовая Служба</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-        }
-        .peer {
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin: 10px;
-        }
-        .peer h2 {
-            margin-top: 0;
-        }
-        .message {
-            background-color: #f9f9f9;
-            border-left: 3px solid #007BFF;
-            padding: 5px;
-            margin: 5px 0;
-            white-space: pre-wrap;
-        }
-    </style>
+    <title>Пиринговая Почтовая Служба</title>
 </head>
 <body>
-    <h1>Одноранговая Почтовая Служба</h1>
-    <div id="peersContainer"></div>
+    <h1>Пиринговая Почтовая Служба</h1>
+    <h2>Список Пиров:</h2>
+    <ul id="peerList">
+        <li>Peer1 - 185.104.251.226:9765
+            <ul id="Peer1"></ul>
+        </li>
+        <li>Peer2 - 185.102.139.161:9765
+            <ul id="Peer2"></ul>
+        </li>
+        <li>Peer3 - 185.102.139.168:9765
+            <ul id="Peer3"></ul>
+        </li>
+        <li>Peer4 - 185.102.139.169:9765
+            <ul id="Peer4"></ul>
+        </li>
+    </ul>
 
     <script>
-        const peersContainer = document.getElementById('peersContainer');
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
-        // Подключение к WebSocket
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const ws = new WebSocket(`${wsProtocol}://${window.location.host}/ws`);
-
-        // Хранилище пиров и их сообщений
-        const peers = {};
-
-        ws.onopen = () => {
-            console.log('WebSocket подключен');
+        ws.onopen = function() {
+            console.log("WebSocket connection established.");
         };
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            const allReceivedMessages = data.allReceivedMessages;
-
-            // Обновляем локальное хранилище
-            for (const [recipientPeerName, messages] of Object.entries(allReceivedMessages)) {
-                if (!peers[recipientPeerName]) {
-                    peers[recipientPeerName] = {
-                        name: recipientPeerName,
-                        messages: []
-                    };
-                }
-                // Обновляем список сообщений
-                peers[recipientPeerName].messages = messages.map(msg => ({
-                    sender: msg.sender,
-                    content: msg.content
-                }));
-            }
-
-            // Обновляем веб-интерфейс
-            renderPeers();
+        ws.onmessage = function(event) {
+            const msg = JSON.parse(event.data);
+            const recipient = msg.Recipients.find(r => r === `<?php echo $peerName; ?>`) || msg.Recipients[0];
+            addMessage(msg, recipient);
         };
 
-        ws.onclose = () => {
-            console.log('WebSocket отключен');
+        ws.onclose = function() {
+            console.log("WebSocket connection closed.");
         };
 
-        ws.onerror = (error) => {
-            console.error('WebSocket ошибка:', error);
-        };
-
-        // Функция для рендеринга пиров и сообщений
-        function renderPeers() {
-            peersContainer.innerHTML = ""; // Очистка контейнера
-
-            for (const [peerName, peerData] of Object.entries(peers)) {
-                const peerDiv = document.createElement('div');
-                peerDiv.className = 'peer';
-
-                const title = document.createElement('h2');
-                title.textContent = `Пир: ${peerData.name}`;
-                peerDiv.appendChild(title);
-
-                const messagesDiv = document.createElement('div');
-                messagesDiv.className = 'messages';
-
-                peerData.messages.forEach(msg => {
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'message';
-                    messageDiv.textContent = `От: ${msg.sender}\nСообщение: ${msg.content}`;
-                    messagesDiv.appendChild(messageDiv);
-                });
-
-                peerDiv.appendChild(messagesDiv);
-                peersContainer.appendChild(peerDiv);
+        function addMessage(msg, recipient) {
+            const recipientList = document.getElementById(recipient);
+            if (recipientList) {
+                const li = document.createElement("li");
+                const date = new Date(msg.Timestamp * 1000);
+                li.textContent = `From: ${msg.Sender} - ${msg.Content} (${date.toLocaleString()})`;
+                recipientList.appendChild(li);
             }
         }
     </script>
