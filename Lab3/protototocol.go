@@ -52,6 +52,9 @@ var (
 	allReceivedMessages    map[string][]Message // map[recipientPeerName][]Message
 	peerInfo               map[string]string    // map[peerName]ip:port
 
+	// Для предотвращения дублирования сообщений
+	processedMessages map[string]bool
+
 	// WebSocket переменные
 	upgrader      = websocket.Upgrader{}
 	wsClients     = make(map[*websocket.Conn]bool)
@@ -106,6 +109,7 @@ func main() {
 	processedNotifications = make(map[string]bool)
 	allReceivedMessages = make(map[string][]Message)
 	peerInfo = make(map[string]string)
+	processedMessages = make(map[string]bool)
 
 	go startListening()
 	go connectToNextPeer()
@@ -216,6 +220,15 @@ func validateMessage(msg *Message) error {
 func receiveMessage(msg *Message) {
 	logEvent("Received %s message %s from %s", msg.Type, msg.ID, msg.Sender)
 
+	// Предотвращение обработки одного и того же сообщения несколько раз
+	if msg.Type == "message" {
+		if processedMessages[msg.ID] {
+			logEvent("Already processed message %s. Discarding.", msg.ID)
+			return
+		}
+		processedMessages[msg.ID] = true
+	}
+
 	if msg.HopCount >= msg.MaxHops {
 		logEvent("Message %s reached max hops. Discarding.", msg.ID)
 		return
@@ -235,36 +248,50 @@ func receiveMessage(msg *Message) {
 		}
 
 		if isRecipient {
-			// Добавляем сообщение в список полученных
-			receivedMessages = append(receivedMessages, *msg)
-			if _, exists := allReceivedMessages[peerName]; !exists {
-				allReceivedMessages[peerName] = []Message{}
+			// Проверяем, не было ли уже добавлено такое сообщение
+			duplicate := false
+			for _, existingMsg := range allReceivedMessages[peerName] {
+				if existingMsg.ID == msg.ID {
+					duplicate = true
+					break
+				}
 			}
-			allReceivedMessages[peerName] = append(allReceivedMessages[peerName], *msg)
-			// Отправляем обновленный список на веб-интерфейс
-			broadcastAllReceivedMessages()
+			if duplicate {
+				logEvent("Duplicate message %s detected. Ignoring.", msg.ID)
+			} else {
+				// Добавляем сообщение в список полученных
+				receivedMessages = append(receivedMessages, *msg)
+				allReceivedMessages[peerName] = append(allReceivedMessages[peerName], *msg)
+				// Отправляем обновленный список на веб-интерфейс
+				broadcastAllReceivedMessages()
 
-			consoleMutex.Lock()
-			fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
-			consoleMutex.Unlock()
+				consoleMutex.Lock()
+				fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
+				consoleMutex.Unlock()
 
-			// Создаем уведомление
-			notification := Message{
-				ID:             msg.ID + "-notif",
-				Type:           "notification",
-				Sender:         peerName, // пир, который получает сообщение
-				SenderIP:       ownAddress,
-				SenderPort:     ownPort,
-				Content:        msg.Content,
-				OriginalSender: msg.Sender,
-				OriginalIP:     msg.SenderIP,
-				OriginalPort:   msg.SenderPort,
-				HopCount:       0,
-				MaxHops:        10,
-				Timestamp:      msg.Timestamp,
+				// Если сообщение адресовано самому себе, не создаем уведомление
+				if msg.Sender == peerName {
+					return
+				}
+
+				// Создаем уведомление
+				notification := Message{
+					ID:             msg.ID + "-notif",
+					Type:           "notification",
+					Sender:         peerName, // пир, который получает сообщение
+					SenderIP:       ownAddress,
+					SenderPort:     ownPort,
+					Content:        msg.Content,
+					OriginalSender: msg.Sender,
+					OriginalIP:     msg.SenderIP,
+					OriginalPort:   msg.SenderPort,
+					HopCount:       0,
+					MaxHops:        10,
+					Timestamp:      msg.Timestamp,
+				}
+
+				forwardMessage(&notification)
 			}
-
-			forwardMessage(&notification)
 		} else {
 			// Сообщение не для этого пира, просто пересылаем
 			forwardMessage(msg)
@@ -283,35 +310,56 @@ func receiveMessage(msg *Message) {
 		// Сохраняем информацию о получателе сообщения
 		peerInfo[msg.Sender] = fmt.Sprintf("%s:%s", msg.SenderIP, msg.SenderPort)
 
-		// Добавляем сообщение в общий список полученных сообщений
-		if _, exists := allReceivedMessages[msg.Sender]; !exists {
-			allReceivedMessages[msg.Sender] = []Message{}
+		// Проверяем, не было ли уже добавлено такое уведомление
+		duplicate := false
+		for _, existingMsg := range allReceivedMessages[msg.Sender] {
+			if existingMsg.ID == msg.ID {
+				duplicate = true
+				break
+			}
 		}
-		allReceivedMessages[msg.Sender] = append(allReceivedMessages[msg.Sender], Message{
-			Sender:         msg.OriginalSender,
-			SenderIP:       msg.OriginalIP,
-			SenderPort:     msg.OriginalPort,
-			Content:        msg.Content,
-			Timestamp:      msg.Timestamp,
-			OriginalSender: "", // не требуется для отображения
-			OriginalIP:     "",
-			OriginalPort:   "",
-		})
+		if duplicate {
+			logEvent("Duplicate notification %s detected. Ignoring.", msg.ID)
+		} else {
+			// Добавляем сообщение в общий список полученных сообщений
+			allReceivedMessages[msg.Sender] = append(allReceivedMessages[msg.Sender], Message{
+				Sender:         msg.OriginalSender,
+				Content:        msg.Content,
+				Timestamp:      msg.Timestamp,
+			})
 
-		// Отправляем обновленный список на веб-интерфейс
-		broadcastAllReceivedMessages()
+			// Отправляем обновленный список на веб-интерфейс
+			broadcastAllReceivedMessages()
 
-		// Пересылаем уведомление дальше по кольцу
-		forwardMessage(msg)
+			// Пересылаем уведомление дальше по кольцу
+			forwardMessage(msg)
+		}
 	}
 }
 
 // forwardMessage пересылает сообщение следующему пирy
 func forwardMessage(msg *Message) {
+	if msg.Type == "notification" && msg.OriginalSender == peerName {
+		// Не пересылаем уведомления обратно отправителю
+		return
+	}
+
+	if msg.Type == "message" {
+		for _, recipient := range msg.Recipients {
+			if recipient == peerName {
+				// Если сообщение адресовано самому себе, не пересылаем
+				return
+			}
+		}
+	}
+
 	if nextPeerConn == nil {
 		go connectToNextPeer()
 	}
 	if nextPeerConn != nil {
+		// Увеличиваем счетчик хопов
+		msg.HopCount += 1
+
 		msgBytes, err := json.Marshal(msg)
 		if err != nil {
 			logError("Failed to marshal message %s: %v", msg.ID, err)
@@ -489,9 +537,20 @@ func broadcastAllReceivedMessages() {
 	wsClientsLock.Lock()
 	defer wsClientsLock.Unlock()
 
+	// Создаем структуру данных для отправки на веб-интерфейс
+	displayData := make(map[string][]map[string]string)
+	for peer, messages := range allReceivedMessages {
+		displayData[peer] = []map[string]string{}
+		for _, msg := range messages {
+			displayData[peer] = append(displayData[peer], map[string]string{
+				"sender":  msg.Sender,
+				"content": msg.Content,
+			})
+		}
+	}
+
 	data := map[string]interface{}{
-		"allReceivedMessages": allReceivedMessages,
-		"peerInfo":            peerInfo,
+		"allReceivedMessages": displayData,
 	}
 
 	msgBytes, err := json.Marshal(data)
