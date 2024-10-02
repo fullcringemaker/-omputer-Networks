@@ -248,11 +248,6 @@ func receiveMessage(msg *Message) {
 			fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
 			consoleMutex.Unlock()
 
-			// Если сообщение адресовано самому себе, не пересылаем уведомление
-			if msg.Sender == peerName {
-				return
-			}
-
 			// Создаем уведомление
 			notification := Message{
 				ID:             msg.ID + "-notif",
@@ -294,11 +289,11 @@ func receiveMessage(msg *Message) {
 		}
 		allReceivedMessages[msg.Sender] = append(allReceivedMessages[msg.Sender], Message{
 			Sender:         msg.OriginalSender,
+			SenderIP:       msg.OriginalIP,
+			SenderPort:     msg.OriginalPort,
 			Content:        msg.Content,
 			Timestamp:      msg.Timestamp,
-			SenderIP:       "", // Не требуется для отображения
-			SenderPort:     "",
-			OriginalSender: "",
+			OriginalSender: "", // не требуется для отображения
 			OriginalIP:     "",
 			OriginalPort:   "",
 		})
@@ -313,20 +308,6 @@ func receiveMessage(msg *Message) {
 
 // forwardMessage пересылает сообщение следующему пирy
 func forwardMessage(msg *Message) {
-	if msg.Type == "notification" && msg.OriginalSender == peerName {
-		// Не пересылаем уведомления обратно отправителю
-		return
-	}
-
-	// Если сообщение адресовано самому себе, не пересылаем
-	if msg.Type == "message" {
-		for _, recipient := range msg.Recipients {
-			if recipient == peerName {
-				return
-			}
-		}
-	}
-
 	if nextPeerConn == nil {
 		go connectToNextPeer()
 	}
@@ -508,20 +489,9 @@ func broadcastAllReceivedMessages() {
 	wsClientsLock.Lock()
 	defer wsClientsLock.Unlock()
 
-	// Создаем структуру данных для отправки на веб-интерфейс
-	displayData := make(map[string][]map[string]string)
-	for peer, messages := range allReceivedMessages {
-		displayData[peer] = []map[string]string{}
-		for _, msg := range messages {
-			displayData[peer] = append(displayData[peer], map[string]string{
-				"sender":  msg.Sender,
-				"content": msg.Content,
-			})
-		}
-	}
-
 	data := map[string]interface{}{
-		"allReceivedMessages": displayData,
+		"allReceivedMessages": allReceivedMessages,
+		"peerInfo":            peerInfo,
 	}
 
 	msgBytes, err := json.Marshal(data)
