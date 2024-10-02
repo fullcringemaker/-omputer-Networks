@@ -39,9 +39,6 @@
         // Хранилище пиров и их сообщений
         const peers = {};
 
-        // Хранилище информации о пирах
-        const peerInfos = {};
-
         ws.onopen = () => {
             console.log('WebSocket подключен');
         };
@@ -49,33 +46,20 @@
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             const allReceivedMessages = data.allReceivedMessages;
-            const peerInfo = data.peerInfo;
-
-            // Обновляем peerInfos
-            for (const [peerName, ipPort] of Object.entries(peerInfo)) {
-                peerInfos[peerName] = ipPort;
-            }
 
             // Обновляем локальное хранилище
             for (const [recipientPeerName, messages] of Object.entries(allReceivedMessages)) {
                 if (!peers[recipientPeerName]) {
                     peers[recipientPeerName] = {
                         name: recipientPeerName,
-                        ipPort: peerInfos[recipientPeerName] || "Unknown",
                         messages: []
                     };
                 }
+                // Обновляем список сообщений
                 peers[recipientPeerName].messages = messages.map(msg => ({
                     sender: msg.sender,
-                    content: msg.content,
-                    timestamp: msg.timestamp,
-                    senderIP: msg.senderIP,
-                    senderPort: msg.senderPort
+                    content: msg.content
                 }));
-                // Обновляем ipPort, если он известен
-                if (peers[recipientPeerName].ipPort === "Unknown" && peerInfos[recipientPeerName]) {
-                    peers[recipientPeerName].ipPort = peerInfos[recipientPeerName];
-                }
             }
 
             // Обновляем веб-интерфейс
@@ -99,7 +83,7 @@
                 peerDiv.className = 'peer';
 
                 const title = document.createElement('h2');
-                title.textContent = `Пир: ${peerData.name} (${peerData.ipPort})`;
+                title.textContent = `Пир: ${peerData.name}`;
                 peerDiv.appendChild(title);
 
                 const messagesDiv = document.createElement('div');
@@ -108,8 +92,7 @@
                 peerData.messages.forEach(msg => {
                     const messageDiv = document.createElement('div');
                     messageDiv.className = 'message';
-                    const time = new Date(msg.timestamp * 1000).toLocaleString();
-                    messageDiv.textContent = `От: ${msg.sender} (${msg.senderIP}:${msg.senderPort}) в ${time}\nСообщение: ${msg.content}`;
+                    messageDiv.textContent = `От: ${msg.sender}\nСообщение: ${msg.content}`;
                     messagesDiv.appendChild(messageDiv);
                 });
 
