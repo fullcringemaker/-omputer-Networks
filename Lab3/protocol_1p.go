@@ -210,33 +210,42 @@ func receiveMessage(msg *Message) {
 		return
 	}
 
-	messageMutex.Lock()
-	defer messageMutex.Unlock()
-
-	for _, m := range receivedMessages {
-		if m.ID == msg.ID {
-			logEvent("Already received message %s. Discarding.", msg.ID)
-			return
-		}
-	}
-
-	receivedMessages = append(receivedMessages, *msg)
-
+	// Проверяем, адресовано ли сообщение этому пиру
+	isRecipient := false
 	for i, recipient := range msg.Recipients {
 		if recipient == peerName {
-			logEvent("Message %s is for us. Handling.", msg.ID)
+			isRecipient = true
 
-			consoleMutex.Lock()
-			fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
-			fmt.Print("Enter command: ")
-			consoleMutex.Unlock()
-
-			// Отправка сообщения через WebSocket
-			broadcastMessage(fmt.Sprintf("Received message from %s: %s", msg.Sender, msg.Content))
-
+			// Удаляем этот пир из списка получателей
 			msg.Recipients = append(msg.Recipients[:i], msg.Recipients[i+1:]...)
 			break
 		}
+	}
+
+	if isRecipient {
+		messageMutex.Lock()
+		// Проверяем, было ли уже получено это сообщение
+		for _, m := range receivedMessages {
+			if m.ID == msg.ID {
+				logEvent("Already received message %s. Discarding.", msg.ID)
+				messageMutex.Unlock()
+				return
+			}
+		}
+
+		// Добавляем сообщение в список полученных
+		receivedMessages = append(receivedMessages, *msg)
+		messageMutex.Unlock()
+
+		logEvent("Message %s is for us. Handling.", msg.ID)
+
+		consoleMutex.Lock()
+		fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
+		fmt.Print("Enter command: ")
+		consoleMutex.Unlock()
+
+		// Отправка сообщения через WebSocket
+		broadcastMessage(fmt.Sprintf("Received message from %s: %s", msg.Sender, msg.Content))
 	}
 
 	msg.HopCount++
