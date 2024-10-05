@@ -1,3 +1,4 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -7,66 +8,86 @@
 <body>
     <h1>Одноранговая Сетевая Служба - Сообщения</h1>
     <div id="peers">
-        <!-- Секции для каждого пира будут добавлены здесь -->
+        <div id="Peer1">
+            <h2>Peer1 (185.104.251.226:9651)</h2>
+            <div class="messages"></div>
+        </div>
+        <div id="Peer2">
+            <h2>Peer2 (185.102.139.161:9651)</h2>
+            <div class="messages"></div>
+        </div>
+        <div id="Peer3">
+            <h2>Peer3 (185.102.139.168:9651)</h2> <!-- Исправлено -->
+            <div class="messages"></div>
+        </div>
+        <div id="Peer4">
+            <h2>Peer4 (185.102.139.169:9651)</h2> <!-- Исправлено -->
+            <div class="messages"></div>
+        </div>
     </div>
 
     <script>
-        // Список всех пиров с их WebSocket URL
         const peers = [
-            { name: "Peer1", wsUrl: "ws://185.104.251.226:9651/ws" },
-            { name: "Peer2", wsUrl: "ws://185.102.139.161:9651/ws" },
-            { name: "Peer3", wsUrl: "ws://185.102.139.168:9651/ws" },
-            { name: "Peer4", wsUrl: "ws://185.102.139.169:9651/ws" }
+            { name: "Peer1", ip: "185.104.251.226", port: "9651" },
+            { name: "Peer2", ip: "185.102.139.161", port: "9651" },
+            { name: "Peer3", ip: "185.102.139.168", port: "9651" }, // Исправлено
+            { name: "Peer4", ip: "185.102.139.169", port: "9651" }  // Исправлено
         ];
 
-        const peersDiv = document.getElementById('peers');
-
-        // Создание секций для каждого пира
         peers.forEach(peer => {
-            const peerSection = document.createElement('div');
-            peerSection.id = `peer-${peer.name}`;
-            peerSection.style.border = "1px solid black";
-            peerSection.style.padding = "10px";
-            peerSection.style.margin = "10px";
-
-            const peerHeader = document.createElement('h2');
-            peerHeader.textContent = `${peer.name} (${peer.wsUrl})`;
-            peerSection.appendChild(peerHeader);
-
-            const messagesList = document.createElement('ul');
-            messagesList.id = `messages-${peer.name}`;
-            peerSection.appendChild(messagesList);
-
-            peersDiv.appendChild(peerSection);
-
-            // Подключение к WebSocket
-            const ws = new WebSocket(peer.wsUrl);
+            const ws = new WebSocket(`ws://${peer.ip}:${peer.port}/ws`);
 
             ws.onopen = () => {
-                console.log(`Connected to ${peer.name}`);
+                console.log(`Connected to ${peer.name} WebSocket`);
             };
 
             ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.recipient === peer.name) {
-                        const li = document.createElement('li');
-                        li.textContent = `From ${msg.sender}: ${msg.content}`;
-                        messagesList.appendChild(li);
-                    }
-                } catch (e) {
-                    console.error("Failed to parse message:", e);
-                }
-            };
-
-            ws.onerror = (error) => {
-                console.error(`WebSocket error for ${peer.name}:`, error);
+                const messageDiv = document.querySelector(`#${peer.name} .messages`);
+                const msg = document.createElement('p');
+                msg.textContent = event.data;
+                messageDiv.appendChild(msg);
             };
 
             ws.onclose = () => {
-                console.log(`WebSocket closed for ${peer.name}`);
+                console.log(`Disconnected from ${peer.name} WebSocket`);
+                // Попытка переподключения через 5 секунд
+                setTimeout(() => {
+                    reconnect(peer);
+                }, 5000);
+            };
+
+            ws.onerror = (err) => {
+                console.error(`WebSocket error with ${peer.name}:`, err);
+                ws.close();
             };
         });
+
+        function reconnect(peer) {
+            const ws = new WebSocket(`ws://${peer.ip}:${peer.port}/ws`);
+
+            ws.onopen = () => {
+                console.log(`Reconnected to ${peer.name} WebSocket`);
+            };
+
+            ws.onmessage = (event) => {
+                const messageDiv = document.querySelector(`#${peer.name} .messages`);
+                const msg = document.createElement('p');
+                msg.textContent = event.data;
+                messageDiv.appendChild(msg);
+            };
+
+            ws.onclose = () => {
+                console.log(`Disconnected from ${peer.name} WebSocket`);
+                setTimeout(() => {
+                    reconnect(peer);
+                }, 5000);
+            };
+
+            ws.onerror = (err) => {
+                console.error(`WebSocket error with ${peer.name}:`, err);
+                ws.close();
+            };
+        }
     </script>
 </body>
 </html>
