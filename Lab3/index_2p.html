@@ -1,1 +1,493 @@
+итак, слушай меня очень внимательно
+у меня есть задание.
+
+Цель работы
+Целью данной работы является разработка одноранговой сетевой службы.
+
+Основные понятия
+Определение 1: Одноранговая сетевая служба — это служба, в которой клиенты и серверы
+равноправны (Peer-2peer — P2P).
+Замечание 1: Одноранговая сетевая служба — это децентрализованная системная
+архитектура.
+Определение 2: Пир (peer) — узел одноранговой сети (P2P).
+Определение 3: Полносвязная топология (полный граф) — топология компьютерной сети,
+в которой каждая рабочая станция подключена ко всем остальным. Этот вариант является
+громоздким и неэффективным, несмотря на свою логическую простоту. Для каждой пары
+должна быть выделена независимая линия, каждый компьютер должен иметь столько
+коммуникационных портов сколько компьютеров в сети. По этим причинам сеть может иметь
+только сравнительно небольшие конечные размеры.
+Определение 4: Кольцевой список — это топология компьютерной сети, когда каждый
+узел однонаправленного (односвязного) циклического списка содержит одно поле указателя на
+следующий узел, при этом в поле указателя последнего узла содержится адрес корневого
+элемента.
+Определение 5: Ориентированное дерево — ориентированный граф без циклов, в котором
+только одна вершина не имеет входящих дуг, а все остальные вершины имеют ровно по одной
+входящей дуге.
+Замечание 2: Клиент одноранговой сетевой службы может выступать в роли сервера и
+наоборот.
+Пример1: Пиринговые файлообменные сети, децентрализованные платёжные системы
+(криптовалюты), службы луковой маршрутизации (анонимные сети).
+
+Задание
+Краткое описание вариантов одноранговых сетевых служб, один из которых нужно разработать в ходе выполнения лабораторной работы, приведено в таблице с перечнем вариантов.
+Основные требования к сетевой службе:
+1. в качестве формата сообщений для протокола взаимодействия пиров нужно
+использовать JSON;
+2. полная проверка данных, получаемых из сети;
+3. устойчивость к обрыву соединения;
+4. ведение подробного лога всех ошибок, а также других важных событий (установка и
+завершение соединения с соседним пиром, приём и передача сообщений, и т.п.).
+Документация к протоколу должна быть оформлена в виде комментариев к структурам
+данных, описывающим сообщения, в исходном коде. Сетевая служба должна работать строго на
+боевых серверах.
+
+Персональный вариант:
+Почтовая служба (кольцо)
+Топология: кольцевой список.
+Информация, известная пиру при запуске: его имя, IPадрес и порт, а также IP-адрес и порт следующего пира в
+кольцевом списке (следующий пир не обязан быть
+заранее запущен).
+Описание службы: каждый пир через стандартный поток
+ввода принимает команды – отправить письмо пирам с
+указанными именами, распечатать список полученных от
+других пиров сообщений.
+
+package main
+
+import (
+ "bufio"
+ "encoding/json"
+ "errors"
+ "fmt"
+ "io"
+ "log"
+ "net"
+ "os"
+ "strings"
+ "sync"
+ "time"
+)
+
+type Message struct {
+ ID         string   json:"id"
+ Sender     string   json:"sender"
+ Recipients []string json:"recipients"
+ Content    string   json:"content"
+ HopCount   int      json:"hop_count"
+ MaxHops    int      json:"max_hops"
+ Timestamp  int64    json:"timestamp"
+}
+
+var (
+ peerName         string
+ ownAddress       string
+ ownPort          string
+ nextPeerAddr     string
+ nextPeerPort     string
+ nextPeerConn     net.Conn
+ listener         net.Listener
+ receivedMessages []Message
+ messageMutex     sync.Mutex
+ logMutex         sync.Mutex
+ consoleMutex     sync.Mutex
+)
+
+func main() {
+ reader := bufio.NewReader(os.Stdin)
+
+ fmt.Print("Name: ")
+ peerNameInput, err := reader.ReadString('\n')
+ if err != nil {
+  fmt.Printf("Error reading Name: %v\n", err)
+  os.Exit(1)
+ }
+ peerName = strings.TrimSpace(peerNameInput)
+
+ fmt.Print("Enter your IP address and port (ip:port): ")
+ ownAddrInput, err := reader.ReadString('\n')
+ if err != nil {
+  fmt.Printf("Error reading own IP and port: %v\n", err)
+  os.Exit(1)
+ }
+ ownAddr := strings.TrimSpace(ownAddrInput)
+
+ fmt.Print("Enter next peer IP address and port (ip:port): ")
+ nextPeerAddrPortInput, err := reader.ReadString('\n')
+ if err != nil {
+  fmt.Printf("Error reading next peer IP and port: %v\n", err)
+  os.Exit(1)
+ }
+ nextPeerAddrPort := strings.TrimSpace(nextPeerAddrPortInput)
+
+ ownAddressPort := strings.Split(ownAddr, ":")
+ if len(ownAddressPort) != 2 {
+  fmt.Println("Invalid own IP address and port format. Expected format ip:port")
+  os.Exit(1)
+ }
+ ownAddress = ownAddressPort[0]
+ ownPort = ownAddressPort[1]
+
+ nextPeerAddressPort := strings.Split(nextPeerAddrPort, ":")
+ if len(nextPeerAddressPort) != 2 {
+  fmt.Println("Invalid next peer IP address and port format. Expected format ip:port")
+  os.Exit(1)
+ }
+ nextPeerAddr = nextPeerAddressPort[0]
+ nextPeerPort = nextPeerAddressPort[1]
+
+ initLogging()
+
+ go startListening()
+
+ go connectToNextPeer()
+
+ handleCommands()
+}
+
+func initLogging() {
+ logFile, err := os.OpenFile(fmt.Sprintf("%s.log", peerName), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+ if err != nil {
+  fmt.Printf("Failed to open log file: %v\n", err)
+  os.Exit(1)
+ }
+ log.SetOutput(logFile)
+ log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+ logEvent("Peer %s started. Listening on %s:%s", peerName, ownAddress, ownPort)
+}
+
+func startListening() {
+ addr := ownAddress + ":" + ownPort
+ var err error
+ listener, err = net.Listen("tcp", addr)
+ if err != nil {
+  logError("Failed to start listening: %v", err)
+  os.Exit(1)
+ }
+ logEvent("Listening for incoming connections on %s", addr)
+ for {
+  conn, err := listener.Accept()
+  if err != nil {
+   logError("Failed to accept connection: %v", err)
+   continue
+  }
+  logEvent("Accepted connection from %s", conn.RemoteAddr().String())
+  go handleConnection(conn)
+ }
+}
+func handleConnection(conn net.Conn) {
+ defer conn.Close()
+ reader := bufio.NewReader(conn)
+ for {
+  line, err := reader.ReadBytes('\n')
+  if err != nil {
+   if err != io.EOF {
+    logError("Error reading from connection: %v", err)
+   }
+   break
+  }
+  var msg Message
+  err = json.Unmarshal(line, &msg)
+  if err != nil {
+   logError("Failed to unmarshal message: %v", err)
+   continue
+  }
+  err = validateMessage(&msg)
+  if err != nil {
+   logError("Invalid message received: %v", err)
+   continue
+  }
+  receiveMessage(&msg)
+ }
+}
+
+func validateMessage(msg *Message) error {
+ if msg.ID == "" {
+  return errors.New("message ID is empty")
+ }
+ if msg.Sender == "" {
+  return errors.New("sender is empty")
+ }
+ if len(msg.Recipients) == 0 {
+  return errors.New("recipients list is empty")
+ }
+ if msg.Content == "" {
+  return errors.New("content is empty")
+ }
+ if msg.HopCount < 0 {
+  return errors.New("invalid hop count")
+ }
+ if msg.MaxHops <= 0 {
+  return errors.New("invalid max hops")
+ }
+ return nil
+}
+
+func receiveMessage(msg *Message) {
+ logEvent("Received message %s from %s", msg.ID, msg.Sender)
+
+ if msg.HopCount >= msg.MaxHops {
+  logEvent("Message %s reached max hops. Discarding.", msg.ID)
+  return
+ }
+
+ messageMutex.Lock()
+ defer messageMutex.Unlock()
+
+ for _, m := range receivedMessages {
+  if m.ID == msg.ID {
+   logEvent("Already received message %s. Discarding.", msg.ID)
+   return
+  }
+ }
+
+ receivedMessages = append(receivedMessages, *msg)
+
+ for i, recipient := range msg.Recipients {
+  if recipient == peerName {
+   logEvent("Message %s is for us. Handling.", msg.ID)
+
+   consoleMutex.Lock()
+   fmt.Printf("\nReceived message from %s: %s\n", msg.Sender, msg.Content)
+   fmt.Print("Enter command: ")
+   consoleMutex.Unlock()
+
+   msg.Recipients = append(msg.Recipients[:i], msg.Recipients[i+1:]...)
+   break
+  }
+ }
+
+ msg.HopCount++
+
+ if len(msg.Recipients) > 0 {
+  forwardMessage(msg)
+ } else {
+  logEvent("All recipients handled for message %s. Not forwarding.", msg.ID)
+ }
+}
+
+func forwardMessage(msg *Message) {
+ if nextPeerConn == nil {
+  connectToNextPeer()
+ }
+ if nextPeerConn != nil {
+  msgBytes, err := json.Marshal(msg)
+  if err != nil {
+   logError("Failed to marshal message %s: %v", msg.ID, err)
+   return
+  }
+  msgBytes = append(msgBytes, '\n')
+  _, err = nextPeerConn.Write(msgBytes)
+  if err != nil {
+   logError("Failed to forward message %s: %v", msg.ID, err)
+   nextPeerConn.Close()
+   nextPeerConn = nil
+   return
+  }
+  logEvent("Forwarded message %s to %s:%s", msg.ID, nextPeerAddr, nextPeerPort)
+ } else {
+  logError("No connection to next peer. Cannot forward message %s", msg.ID)
+ }
+}
+
+func connectToNextPeer() {
+ for {
+  addr := nextPeerAddr + ":" + nextPeerPort
+  conn, err := net.Dial("tcp", addr)
+  if err != nil {
+   logError("Failed to connect to next peer %s:%s: %v. Retrying in 5 seconds.", nextPeerAddr, nextPeerPort, err)
+   time.Sleep(5 * time.Second)
+   continue
+  }
+  nextPeerConn = conn
+  logEvent("Connected to next peer %s:%s", nextPeerAddr, nextPeerPort)
+  return
+ }
+}
+
+func handleCommands() {
+ reader := bufio.NewReader(os.Stdin)
+ for {
+  consoleMutex.Lock()
+  fmt.Print("Enter command: ")
+  consoleMutex.Unlock()
+
+  cmdLine, err := reader.ReadString('\n')
+  if err != nil {
+   logError("Failed to read command: %v", err)
+   continue
+  }
+  cmdLine = strings.TrimSpace(cmdLine)
+  if cmdLine == "" {
+   continue
+  }
+  parts := strings.Fields(cmdLine)
+  if len(parts) == 0 {
+   continue
+  }
+  switch parts[0] {
+  case "send":
+   if len(parts) < 3 {
+    fmt.Println("Usage: send <recipient1,recipient2,...> <message>")
+    continue
+   }
+   recipients := strings.Split(parts[1], ",")
+   content := strings.Join(parts[2:], " ")
+   sendMessage(recipients, content)
+  case "print":
+   printReceivedMessages()
+  default:
+   fmt.Println("Unknown command. Available commands: send, print")
+  }
+ }
+}
+
+func sendMessage(recipients []string, content string) {
+ msg := Message{
+  ID:         generateMessageID(),
+  Sender:     peerName,
+  Recipients: recipients,
+  Content:    content,
+  HopCount:   0,
+  MaxHops:    10,
+  Timestamp:  time.Now().Unix(),
+ }
+ logEvent("Sending message %s to %v", msg.ID, recipients)
+ forwardMessage(&msg)
+}
+
+func generateMessageID() string {
+ return fmt.Sprintf("%s-%d", peerName, time.Now().UnixNano())
+}
+
+func printReceivedMessages() {
+ messageMutex.Lock()
+ defer messageMutex.Unlock()
+ if len(receivedMessages) == 0 {
+  fmt.Println("No messages received.")
+  return
+ }
+ fmt.Println("Received messages:")
+ for _, msg := range receivedMessages {
+  fmt.Printf("From: %s; Content: %s\n", msg.Sender, msg.Content)
+ }
+}
+
+func logEvent(format string, v ...interface{}) {
+ logMutex.Lock()
+ defer logMutex.Unlock()
+ log.Printf("EVENT: "+format, v...)
+}
+
+func logError(format string, v ...interface{}) {
+ logMutex.Lock()
+ defer logMutex.Unlock()
+ log.Printf("ERROR: "+format, v...)
+}
+
+я запускаю 4 сервера. 
+айпи этих ssh-серверов (вместе в портом): 
+185.104.251.226:9765 
+
+185.102.139.161:9765
+
+185.102.139.161:9765
+
+185.102.139.161:9765
+
+Эти айпи я передаю по кругу всем пирам на SSH-серверах.
+мне нужно, чтобы при прописывании go run protoc.go (один из файлов, где будет лежать выполнение задания) по любой из ссылок
+http://185.104.251.226:9651/ (активируется при прописывании go run protoc.go на 1 ssh-сервере)
+http://185.102.139.161:9651/ (активируется при прописывании go run protoc.go на 2 ssh-сервере)
+http://185.102.139.169:9651/ (активируется при прописывании go run protoc.go на 3 ssh-сервере)
+http://185.102.139.168:9651/ (активируется при прописывании go run protoc.go на 4 ssh-сервере) 
+открывался сайт, где можно будет в реальном времени увидеть приходящие на каждый пир сообщения. Я должен видеть на сайте тоже самое, что вижу в терминале при запуске сервера (что пиру пришло сообщение с другого пира), но на сайте я должен видеть все пиры одновременно в одном месте. 
+
+Если на какой нибудь (не через пир, а именно конкретно на сам пир) из пиров придет сообщение (на ssh-сервере) от другого пира, то в режиме реального времени с помощью вебсокетов на сайте будут показываться пришедшее сообщение
+
+предоставь мне доделанный код, который будет соответствовать моему запросу. код должен быть представлен в полноценном полном варианте для удобства копирования. 
+
+нужно чтобы было только 2 файла!!: html файл и protoc.go, где будет указанная исходная реализация + при запуске через go run
+
+На сайте должно выводиться следующим образом:
+Название всех пиров, их ip:порт.
+Не нужно добавлять никакого css оформления, вообще не нужно css оформления. Нужно чтобы брались отправленные сообщения с одного пира на другой и выводились на сайте под тем пиром, на который было отправлено сообщение (важно, чтобы сооьшение показыаалось, если оно было отправлено именно на этот пир, а не через этот пир) 
+
+например если мы с 1 пира отправляем на 2 пир сообщение, то на сервере пол заголовком с именем и айпи с портом принадлежащем 2 пиру, должно выводиться сообщение в том жк формате, как выводиться на серверн 
+Received message from Peer1: kgbhnjhgbn
+
+выводить на сайт нужно только сообщения, которые передаются пирам от других пиров и обязательно на сайте должно обновляться в реальном времени
+
+по оформлению на html странице должно выглядеть примерно так как, в коде ниже, но только рядом с названиями пиров должны быть просто их айпи и порт (не так, как в коде ниже). к тому же все должно работать так, чтобы внутри рамок с пирами выводились сообщения,  поэтому оставить из кода ниже нужно именно внешний вид
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Одноранговая Сетевая Служба - Сообщения</title>
+</head>
+<body>
+    <h1>Одноранговая Сетевая Служба - Сообщения</h1>
+    <div id="peers">
+        <!-- Секции для каждого пира будут добавлены здесь -->
+    </div>
+
+    <script>
+        // Список всех пиров с их WebSocket URL
+        const peers = [
+            { name: "Peer1", wsUrl: "ws://185.104.251.226:9651/ws" },
+            { name: "Peer2", wsUrl: "ws://185.102.139.161:9651/ws" },
+            { name: "Peer3", wsUrl: "ws://185.102.139.168:9651/ws" },
+            { name: "Peer4", wsUrl: "ws://185.102.139.169:9651/ws" }
+        ];
+
+        const peersDiv = document.getElementById('peers');
+
+        // Создание секций для каждого пира
+        peers.forEach(peer => {
+            const peerSection = document.createElement('div');
+            peerSection.id = peer-${peer.name};
+            peerSection.style.border = "1px solid black";
+            peerSection.style.padding = "10px";
+            peerSection.style.margin = "10px";
+
+            const peerHeader = document.createElement('h2');
+            peerHeader.textContent = ${peer.name} (${peer.wsUrl});
+            peerSection.appendChild(peerHeader);
+
+            const messagesList = document.createElement('ul');
+            messagesList.id = messages-${peer.name};
+            peerSection.appendChild(messagesList);
+
+            peersDiv.appendChild(peerSection);
+
+            // Подключение к WebSocket
+            const ws = new WebSocket(peer.wsUrl);
+
+            ws.onopen = () => {
+                console.log(Connected to ${peer.name});
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.recipient === peer.name) {
+                        const li = document.createElement('li');
+                        li.textContent = From ${msg.sender}: ${msg.content};
+                        messagesList.appendChild(li);
+                    }
+                } catch (e) {
+                    console.error("Failed to parse message:", e);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error(WebSocket error for ${peer.name}:, error);
+            };
+
+            ws.onclose = () => {
+                console.log(WebSocket closed for ${peer.name});
+            };
+        });
+    </script>
+</body>
+</html>
 
