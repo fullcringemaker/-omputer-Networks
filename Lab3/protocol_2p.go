@@ -509,11 +509,6 @@ func sendMessageFrom(sender string, recipients []string, content string) {
 	forwardMessage(&msg)
 }
 
-// Функция для отправки сообщений через P2P сеть от собственного пира
-func sendMessage(sender string, recipients []string, content string) {
-	sendMessageFrom(sender, recipients, content)
-}
-
 // Функция для отправки сообщений всем подключенным WebSocket клиентам
 func broadcastMessage(message string) {
 	clientsMutex.Lock()
@@ -527,4 +522,3 @@ func broadcastMessage(message string) {
 		}
 	}
 }
-
