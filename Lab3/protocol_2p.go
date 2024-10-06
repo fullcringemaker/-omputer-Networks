@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"html/template"
 	"io"
 	"log"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Структура сообщения
@@ -492,21 +493,6 @@ func handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]string{"status": "success"}
 	json.NewEncoder(w).Encode(resp)
-}
-
-// Функция для отправки сообщений через P2P сеть от указанного отправителя
-func sendMessageFrom(sender string, recipients []string, content string) {
-	msg := Message{
-		ID:         generateMessageID(),
-		Sender:     sender,
-		Recipients: recipients,
-		Content:    content,
-		HopCount:   0,
-		MaxHops:    10,
-		Timestamp:  time.Now().Unix(),
-	}
-	logEvent("Sending message %s from %s to %v", msg.ID, sender, recipients)
-	forwardMessage(&msg)
 }
 
 // Функция для отправки сообщений всем подключенным WebSocket клиентам
