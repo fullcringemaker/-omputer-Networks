@@ -389,9 +389,9 @@ func startHTTPServer() {
 }
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.ParseFiles("index.html")
+	tmpl, err := template.ParseFiles("ind.html")
 	if err != nil {
-		logError("Failed to parse index.html: %v", err)
+		logError("Failed to parse ind.html: %v", err)
 		http.Error(w, "Internal Server Error", 500)
 		return
 	}
