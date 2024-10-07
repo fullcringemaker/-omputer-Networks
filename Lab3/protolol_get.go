@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"html/template"
 	"io"
 	"log"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Структура сообщения
@@ -59,10 +60,10 @@ var (
 	peerList     = []PeerInfo{
 		{Name: "Peer1", IP: "185.104.251.226", Port: "9651"},
 		{Name: "Peer2", IP: "185.102.139.161", Port: "9651"},
-		{Name: "Peer3", IP: "185.102.139.168", Port: "9651"}, // Исправлено
-		{Name: "Peer4", IP: "185.102.139.169", Port: "9651"}, // Исправлено
+		{Name: "Peer3", IP: "185.102.139.168", Port: "9651"},
+		{Name: "Peer4", IP: "185.102.139.169", Port: "9651"},
 	}
-}
+)
 
 // Структура информации о пирах для HTML
 type PeerInfo struct {
@@ -339,21 +340,6 @@ func handleCommands() {
 	}
 }
 
-// sendMessageFrom позволяет отправлять сообщение от указанного отправителя
-func sendMessageFrom(sender string, recipients []string, content string) {
-	msg := Message{
-		ID:         generateMessageID(),
-		Sender:     sender,
-		Recipients: recipients,
-		Content:    content,
-		HopCount:   0,
-		MaxHops:    10,
-		Timestamp:  time.Now().Unix(),
-	}
-	logEvent("Sending message %s from %s to %v", msg.ID, sender, recipients)
-	forwardMessage(&msg)
-}
-
 // sendMessage отправляет сообщение от указанного отправителя
 func sendMessage(sender string, recipients []string, content string) {
 	sendMessageFrom(sender, recipients, content)
@@ -403,9 +389,9 @@ func startHTTPServer() {
 }
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.ParseFiles("index.html")
+	tmpl, err := template.ParseFiles("ind.html")
 	if err != nil {
-		logError("Failed to parse index.html: %v", err)
+		logError("Failed to parse ind.html: %v", err)
 		http.Error(w, "Internal Server Error", 500)
 		return
 	}
