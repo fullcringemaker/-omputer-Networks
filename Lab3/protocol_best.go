@@ -191,7 +191,6 @@ func receiveMessage(msg *Message) {
 	for i, recipient := range msg.Recipients {
 		if recipient == peerName {
 			isRecipient = true
-
 			msg.Recipients = append(msg.Recipients[:i], msg.Recipients[i+1:]...)
 			break
 		}
@@ -264,7 +263,6 @@ func handleCommands() {
 		consoleMutex.Lock()
 		fmt.Print("Enter command: ")
 		consoleMutex.Unlock()
-
 		cmdLine, err := reader.ReadString('\n')
 		if err != nil {
 			logError("Failed to read command: %v", err)
