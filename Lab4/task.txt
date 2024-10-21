@@ -1,13 +1,123 @@
-разработаем элементарный прокси-сервер с возможностью парсинга контента (анализатор трафика по протоколу http)
+вот есть код
 
-есть локальная сеть. есть клиенты (конечные узлы или пользователи, использующие браузер для доступа в интернет). ставится и прописывать http-proxy (работает не на 80 порту, не на 443, они должны быть на gateway закрыты, чтобы нельзя было обращаться к внешним ресурсам). 
-На gateway прописывается, что все, что приходит на gateway в айпи-адресе получателя, и там будет 443 или 80 порт, то происходит delay-drop пакетов.
+package main
 
-Пусть у Lan будет IP 192.168.1.0, у http proxy будет 192.168.1.254. и этому прокси-серверу доступ в интернет разрешен (только ему), и если мы траффик пользователей по 80 или 443 порту пропустим не через gateway, а через proxy. Допустим для примера он слушает на 8000-ом порту, тогда весь трафик идет в http-proxy. Если допустим пишем www.yandex.ru, запрос идет на proxy-сервер, а уже proxy-сервер в зависимости от реализации кода перенаправляет на gateway, а там для него все порыт открыты. Затем данные отправляются к внешним узлам, данные возвращаются и маршрутизируются опять на proxy (он запоминает, от кого именно пришел запрос). Http-proxy кэширует запросы
+import (
+ "crypto/tls"
+ "fmt"
+ "io"
+ "log"
+ "net/http"
+ "strings"
 
+ "github.com/PuerkitoBio/goquery"
+)
+
+func handleRequestAndRedirect(res http.ResponseWriter, req *http.Request) {
+ // Извлечение домена из запроса
+ targetURL := req.URL.Path[1:] // Пример: "bmstu.ru"
+ 
+ if !strings.HasPrefix(targetURL, "http") {
+  targetURL = "https://" + targetURL // По умолчанию HTTPS
+ }
+
+ // Отправка запроса на целевой сервер
+ proxyReq, err := http.NewRequest(req.Method, targetURL, req.Body)
+ if err != nil {
+  http.Error(res, "Bad request", http.StatusBadRequest)
+  return
+ }
+
+ // Копирование заголовков запроса
+ proxyReq.Header = req.Header
+
+ client := &http.Client{
+  Transport: &http.Transport{
+   TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+  },
+ }
+
+ resp, err := client.Do(proxyReq)
+ if err != nil {
+  http.Error(res, "Bad gateway", http.StatusBadGateway)
+  return
+ }
+ defer resp.Body.Close()
+
+ // Парсинг и модификация HTML
+ if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+  modifyAndWriteHTML(res, resp, req.Host)
+ } else {
+  // Копирование обычного контента (например, CSS, JS, картинки)
+  copyResponse(res, resp)
+ }
+}
+
+// Функция для модификации HTML-контента и замены ссылок
+func modifyAndWriteHTML(res http.ResponseWriter, resp *http.Response, proxyHost string) {
+ doc, err := goquery.NewDocumentFromReader(resp.Body)
+ if err != nil {
+  http.Error(res, "Error parsing HTML", http.StatusInternalServerError)
+  return
+ }
+
+ // Замена всех гиперссылок на проксирующие
+ doc.Find("a").Each(func(i int, s *goquery.Selection) {
+  href, exists := s.Attr("href")
+ 
+  if exists && strings.HasPrefix(href, "http") {
+   if href[4:5] =="s" {
+    href = href[8:]
+   } else {
+    href = href[7:]
+   }
+   proxyLink := "https://" + proxyHost + "/" + href
+   fmt.Println(proxyLink)
+   s.SetAttr("href", proxyLink)
+  }
+ })
+ doc.Find("img").Each(func(i int, s *goquery.Selection) {
+  src, exists := s.Attr("src")
+ 
+  if exists {
+   proxyLink := "https://" + proxyHost + "/" + resp.TLS.ServerName + "/" + src
+   fmt.Println(proxyLink)
+   s.SetAttr("src", proxyLink)
+  }
+ })
+
+ // Запись модифицированного HTML в ответ
+ html, err := doc.Html()
+ if err != nil {
+  http.Error(res, "Error writing HTML", http.StatusInternalServerError)
+  return
+ }
+
+ res.Header().Set("Content-Type", "text/html")
+ res.WriteHeader(resp.StatusCode)
+ res.Write([]byte(html))
+}
+
+// Функция для копирования ответа (не HTML)
+func copyResponse(res http.ResponseWriter, resp *http.Response) {
+ for name, values := range resp.Header {
+  res.Header()[name] = values
+ }
+ res.WriteHeader(resp.StatusCode)
+ io.Copy(res, resp.Body)
+}
+
+func main() {
+ // Прокси будет слушать на порту 9133
+ http.HandleFunc("/", handleRequestAndRedirect)
+ log.Println("Proxy server is running on port 9133")
+ log.Fatal(http.ListenAndServeTLS(":9133", "server.crt", "server.key", nil)) // HTTPS
+}
+
+он является решением для задания, написанного ниже 
 
 схема работы для выполнения задания. Итак, internet, gateway. пользователь нахожусь в какой то локальной сети. есть 4 wds-сервера. вот на эти сервера ставлю эти proxy. тренируем на новостных сайтах (где можно пройтись по ссылкам и достать ссылки.
-Механизм такой: я беру в браузере сайт bmstu.ru, но пишу не эту ссылку, а пишу https://185.104.251.226:9742/bmstu.ru (где 185.104.251.226 это айпи одного из wds серверов, а 9742 - порт, который я использую), куда нельзя обратиться напрямую и можно только через прокси. можно сказать, что в прокси в качестве гет-параметра передается домен, который мы проксируем. прокси получает домен, идет на bmstu.ru и должен вернуть контент пользователю. в итоге пользователю должно вернуть страничку как на bmstu.ru, но с адресом https://net1.yss.su:9742/bmstu.ru. При этом все гиперссылки должны быть изменены на проксирующие гиперссылки. Нужно парсер реализовать (как минимум чтобы найти ссылки)
+Механизм такой: я беру в браузере сайт bmstu.ru, но пишу не эту ссылку, а пишу https://185.104.251.226:9742/bmstu.ru (где 185.104.251.226 это айпи одного из wds серверов, а 9742 - порт, который я использую), куда нельзя обратиться напрямую и можно только через прокси. можно сказать, что в прокси в качестве гет-параметра передается домен, который мы проксируем. прокси получает домен, идет на bmstu.ru и должен вернуть контент пользователю. в итоге пользователю должно вернуть страничку как на bmstu.ru, но с адресом https://net1.yss.su:9651/bmstu.ru. При этом все гиперссылки должны быть изменены на проксирующие гиперссылки. Нужно парсер реализовать (как минимум чтобы найти ссылки)
 Если делать все правильно, заблокировать на компе bmstu.ru, то когда прокси вернет страничку, то при неправильнйо передаче css и js, то страница развалится. Нужно проксировать именно html-ные сайты, потому что для данного задания не все будут проксироваться. Мы проксируем html по минимум, поэтому берутся простые сайты, но должно работать хотя бы с логотипами. Но нужно проксировать существующие сайты (нельзя развернуть свой сайт и на нем делать)
 
 научиться заблочить хост для этого
@@ -19,7 +129,7 @@
 server 1:
 185.104.251.226
 
-порт я использую 9742
+я использую порт 9742
 
 код должен быть написан на go и запускаться командой go run proxy.go
 
@@ -33,4 +143,6 @@ server 1:
 Таким образом все гиперссылки на сайте должны быть проксированными. ЭТО ОЧЕНЬ ВАЖНО
 
 При этом должны отображаться картинки. Идея -  переделывать png в ссылку, т.е. она будет брать изначальную ссылку и приписывает через / название картинки
+
+переделай код. Измени его, но при этом сохрани его функционал
 
