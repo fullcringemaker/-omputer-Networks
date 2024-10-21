@@ -28,6 +28,12 @@ var servers = []string{
     "185.102.139.169:9742",
 }
 
+// Структура для хранения кэшированного ответа
+type CachedResponse struct {
+    Headers map[string]string
+    Body    []byte
+}
+
 func main() {
     // Настройка обработчика прокси-запросов
     http.HandleFunc("/", proxyHandler)
@@ -52,12 +58,6 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
     targetPath := ""
     if len(parts) > 1 {
         targetPath = parts[1]
-    }
-
-    // Определяем схему (http или https) из оригинального запроса
-    scheme := "https" // По умолчанию используем https
-    if r.URL.Scheme != "" {
-        scheme = r.URL.Scheme
     }
 
     // Формируем целевой URL
@@ -85,9 +85,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Копируем заголовки из оригинального запроса, если необходимо
-    // req.Header = r.Header
-
+    // Выполняем запрос
     resp, err := client.Do(req)
     if err != nil {
         http.Error(w, fmt.Sprintf("Failed to fetch target URL: %v", err), http.StatusBadGateway)
@@ -132,12 +130,6 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
     }
     w.Header().Set("Content-Type", "text/html")
     w.Write(modifiedBody)
-}
-
-// Структура для хранения кэшированного ответа
-type CachedResponse struct {
-    Headers map[string]string
-    Body    []byte
 }
 
 // Функция переписывания HTML-контента
