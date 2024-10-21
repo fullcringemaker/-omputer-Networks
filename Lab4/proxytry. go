@@ -1,0 +1,159 @@
+package main
+
+import (
+    "bytes"
+    "fmt"
+    "io"
+    "log"
+    "net"
+    "net/http"
+    "net/url"
+    "regexp"
+    "sync"
+)
+
+const (
+    proxyPort = 9742
+    proxyIP   = "185.104.251.226" // замените на соответствующий IP сервера
+)
+
+// Cache структура для кэширования
+type Cache struct {
+    data map[string][]byte
+    mu   sync.RWMutex
+}
+
+func NewCache() *Cache {
+    return &Cache{
+        data: make(map[string][]byte),
+    }
+}
+
+func (c *Cache) Get(key string) ([]byte, bool) {
+    c.mu.RLock()
+    defer c.mu.RUnlock()
+    val, exists := c.data[key]
+    return val, exists
+}
+
+func (c *Cache) Set(key string, value []byte) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.data[key] = value
+}
+
+var cache = NewCache()
+
+func main() {
+    http.HandleFunc("/", proxyHandler)
+    addr := fmt.Sprintf(":%d", proxyPort)
+    log.Printf("Starting proxy server on %s", addr)
+    if err := http.ListenAndServe(addr, nil); err != nil {
+        log.Fatalf("Failed to start server: %v", err)
+    }
+}
+
+func proxyHandler(w http.ResponseWriter, r *http.Request) {
+    // Ожидаем URL в формате /example.com/path
+    targetHost := r.URL.Path[1:]
+    if targetHost == "" {
+        http.Error(w, "No target host specified", http.StatusBadRequest)
+        return
+    }
+
+    // Собираем целевую URL
+    targetURL := "http://" + targetHost
+    if r.URL.RawQuery != "" {
+        targetURL += "?" + r.URL.RawQuery
+    }
+
+    // Проверка кэша
+    if cachedResponse, found := cache.Get(targetURL); found {
+        w.Header().Set("Content-Type", "text/html")
+        w.Write(cachedResponse)
+        return
+    }
+
+    // Создаем новый запрос к целевому серверу
+    req, err := http.NewRequest(r.Method, targetURL, r.Body)
+    if err != nil {
+        http.Error(w, "Failed to create request", http.StatusInternalServerError)
+        return
+    }
+
+    // Копируем заголовки
+    req.Header = r.Header
+
+    // Используем стандартный клиент
+    client := &http.Client{}
+    resp, err := client.Do(req)
+    if err != nil {
+        http.Error(w, "Failed to fetch target URL", http.StatusBadGateway)
+        return
+    }
+    defer resp.Body.Close()
+
+    // Читаем тело ответа
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        http.Error(w, "Failed to read response", http.StatusInternalServerError)
+        return
+    }
+
+    // Если контент HTML, парсим и модифицируем ссылки
+    contentType := resp.Header.Get("Content-Type")
+    if regexp.MustCompile(`text/html`).MatchString(contentType) {
+        modifiedBody := modifyLinks(body)
+        cache.Set(targetURL, modifiedBody)
+        body = modifiedBody
+    }
+
+    // Копируем заголовки ответа
+    for key, values := range resp.Header {
+        for _, value := range values {
+            w.Header().Add(key, value)
+        }
+    }
+
+    // Отправляем измененное тело
+    w.WriteHeader(resp.StatusCode)
+    w.Write(body)
+}
+
+func modifyLinks(body []byte) []byte {
+    // Регулярное выражение для поиска href и src
+    re := regexp.MustCompile(`(href|src)=["']?([^"'>]+)["']?`)
+
+    // Функция замены
+    modified := re.ReplaceAllFunc(body, func(match []byte) []byte {
+        parts := bytes.Split(match, []byte("="))
+        if len(parts) != 2 {
+            return match
+        }
+        attr := string(parts[0])
+        link := string(parts[1])
+        // Проверяем, является ли ссылка абсолютной
+        if isAbsoluteURL(link) {
+            parsedURL, err := url.Parse(link)
+            if err != nil {
+                return match
+            }
+            newLink := fmt.Sprintf("http://%s:%d%s", proxyIP, proxyPort, parsedURL.Host+parsedURL.Path)
+            if parsedURL.RawQuery != "" {
+                newLink += "?" + parsedURL.RawQuery
+            }
+            return []byte(fmt.Sprintf(`%s="http://%s:%d/%s"`, attr, proxyIP, proxyPort, parsedURL.Host+parsedURL.Path))
+        }
+        return match
+    })
+
+    return modified
+}
+
+func isAbsoluteURL(link string) bool {
+    parsed, err := url.Parse(link)
+    if err != nil {
+        return false
+    }
+    return parsed.IsAbs()
+}
