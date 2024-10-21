@@ -9,10 +9,8 @@ import (
     "io"
     "io/ioutil"
     "log"
-    "net"
     "net/http"
     "net/url"
-    "regexp"
     "strings"
     "sync"
     "time"
@@ -70,11 +68,18 @@ func handleRequestAndRedirect(w http.ResponseWriter, r *http.Request) {
         newPath = "/"
     }
 
-    targetURL := fmt.Sprintf("http://%s%s", domain, newPath)
+    // Определяем схему (http или https)
+    scheme := "http"
+    if r.TLS != nil {
+        scheme = "https"
+    }
+
+    targetURL := fmt.Sprintf("%s://%s%s", scheme, domain, newPath)
     log.Printf("Proxying request to: %s", targetURL)
 
     // Проверяем кэш
     if cachedResponse, found := cache.Get(targetURL); found {
+        log.Printf("Cache hit for: %s", targetURL)
         w.Write(cachedResponse)
         return
     }
@@ -82,38 +87,42 @@ func handleRequestAndRedirect(w http.ResponseWriter, r *http.Request) {
     // Создаем новый запрос
     req, err := http.NewRequest(r.Method, targetURL, r.Body)
     if err != nil {
+        log.Printf("Error creating request: %v", err)
         http.Error(w, "Bad request", http.StatusBadRequest)
         return
     }
 
     // Копируем заголовки
-    copyHeaders(r.Header, &req.Header)
+    copyHeaders(r.Header, req.Header)
 
     client := &http.Client{
-        Timeout: 10 * time.Second,
+        Timeout: 15 * time.Second,
     }
 
     resp, err := client.Do(req)
     if err != nil {
+        log.Printf("Error fetching URL %s: %v", targetURL, err)
         http.Error(w, "Error fetching the requested page", http.StatusBadGateway)
         return
     }
     defer resp.Body.Close()
 
     // Копируем заголовки ответа
-    copyHeaders(resp.Header, &w.Header())
+    copyHeaders(resp.Header, w.Header())
 
     // Если контент HTML, парсим и изменяем ссылки
     contentType := resp.Header.Get("Content-Type")
     if strings.Contains(contentType, "text/html") {
         bodyBytes, err := ioutil.ReadAll(resp.Body)
         if err != nil {
+            log.Printf("Error reading response body: %v", err)
             http.Error(w, "Error reading response body", http.StatusInternalServerError)
             return
         }
 
-        modifiedBody, err := rewriteHTML(bodyBytes, domain)
+        modifiedBody, err := rewriteHTML(bodyBytes, domain, scheme)
         if err != nil {
+            log.Printf("Error parsing HTML: %v", err)
             http.Error(w, "Error parsing HTML", http.StatusInternalServerError)
             return
         }
@@ -126,6 +135,7 @@ func handleRequestAndRedirect(w http.ResponseWriter, r *http.Request) {
         // Для других типов контента просто проксируем
         bodyBytes, err := ioutil.ReadAll(resp.Body)
         if err != nil {
+            log.Printf("Error reading non-HTML response body: %v", err)
             http.Error(w, "Error reading response body", http.StatusInternalServerError)
             return
         }
@@ -137,7 +147,7 @@ func handleRequestAndRedirect(w http.ResponseWriter, r *http.Request) {
     }
 }
 
-func copyHeaders(src http.Header, dest *http.Header) {
+func copyHeaders(src http.Header, dest http.Header) {
     for key, values := range src {
         for _, value := range values {
             dest.Add(key, value)
@@ -145,7 +155,7 @@ func copyHeaders(src http.Header, dest *http.Header) {
     }
 }
 
-func rewriteHTML(body []byte, domain string) ([]byte, error) {
+func rewriteHTML(body []byte, domain string, scheme string) ([]byte, error) {
     doc, err := html.Parse(bytes.NewReader(body))
     if err != nil {
         return nil, err
@@ -159,13 +169,20 @@ func rewriteHTML(body []byte, domain string) ([]byte, error) {
                 attr = "href"
             } else if n.Data == "img" || n.Data == "script" {
                 attr = "src"
+            } else if n.Data == "link" {
+                // Для тегов link, обрабатываем href
+                attr = "href"
             }
 
             if attr != "" {
                 for i, a := range n.Attr {
                     if a.Key == attr {
-                        newURL := rewriteURL(a.Val, domain)
-                        n.Attr[i].Val = newURL
+                        originalURL := a.Val
+                        newURL := rewriteURL(originalURL, domain, scheme)
+                        if newURL != originalURL {
+                            n.Attr[i].Val = newURL
+                            log.Printf("Rewrote %s: %s -> %s", attr, originalURL, newURL)
+                        }
                     }
                 }
             }
@@ -187,22 +204,51 @@ func rewriteHTML(body []byte, domain string) ([]byte, error) {
     return buf.Bytes(), nil
 }
 
-func rewriteURL(originalURL string, domain string) string {
-    // Проверяем, является ли URL абсолютным
-    parsedURL, err := url.Parse(originalURL)
-    if err != nil || parsedURL.Scheme == "" && parsedURL.Host == "" {
-        // Относительный URL, оставляем как есть
+func rewriteURL(originalURL string, domain string, scheme string) string {
+    // Обработка пустых и невалидных URL
+    if originalURL == "" || strings.HasPrefix(originalURL, "javascript:") || strings.HasPrefix(originalURL, "mailto:") {
         return originalURL
     }
 
-    // Изменяем URL, чтобы он проходил через прокси
-    // Например: /bmstu.ru/path
-    newURL := fmt.Sprintf("/%s%s", domain, parsedURL.Path)
-    if parsedURL.RawQuery != "" {
-        newURL += "?" + parsedURL.RawQuery
+    parsedURL, err := url.Parse(originalURL)
+    if err != nil {
+        log.Printf("Error parsing URL %s: %v", originalURL, err)
+        return originalURL
     }
-    if parsedURL.Fragment != "" {
-        newURL += "#" + parsedURL.Fragment
+
+    // Если URL относительный, не начинающийся с '/', оставляем как есть
+    if !parsedURL.IsAbs() && !strings.HasPrefix(originalURL, "/") {
+        return originalURL
     }
-    return newURL
+
+    // Протокол-независимые URL (начинаются с //)
+    if parsedURL.Scheme == "" && strings.HasPrefix(originalURL, "//") {
+        parsedURL, err = url.Parse(scheme + ":" + originalURL)
+        if err != nil {
+            log.Printf("Error parsing protocol-relative URL %s: %v", originalURL, err)
+            return originalURL
+        }
+    }
+
+    // Если URL абсолютный, переписываем через прокси
+    if parsedURL.IsAbs() {
+        // Сохраняем путь, параметры и фрагмент
+        newURL := fmt.Sprintf("/%s%s", parsedURL.Host, parsedURL.Path)
+        if parsedURL.RawQuery != "" {
+            newURL += "?" + parsedURL.RawQuery
+        }
+        if parsedURL.Fragment != "" {
+            newURL += "#" + parsedURL.Fragment
+        }
+        return newURL
+    }
+
+    // Если URL начинается с '/', переписываем через прокси
+    if strings.HasPrefix(originalURL, "/") {
+        newURL := fmt.Sprintf("/%s%s", domain, originalURL)
+        return newURL
+    }
+
+    // Для остальных относительных URL оставляем как есть
+    return originalURL
 }
