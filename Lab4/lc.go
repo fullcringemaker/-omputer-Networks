@@ -68,7 +68,13 @@ func handleRequestAndRedirect(w http.ResponseWriter, r *http.Request) {
         newPath = "/"
     }
 
-    targetURL := fmt.Sprintf("http://%s%s", domain, newPath)
+    // Определяем схему (http или https)
+    scheme := "http"
+    if r.TLS != nil {
+        scheme = "https"
+    }
+
+    targetURL := fmt.Sprintf("%s://%s%s", scheme, domain, newPath)
     log.Printf("Proxying request to: %s", targetURL)
 
     // Проверяем кэш
@@ -188,26 +194,24 @@ func rewriteHTML(body []byte, domain string) ([]byte, error) {
 func rewriteURL(originalURL string, domain string) string {
     // Проверяем, является ли URL абсолютным
     parsedURL, err := url.Parse(originalURL)
-    if err != nil || (parsedURL.Scheme == "" && parsedURL.Host == "") {
+    if err != nil {
+        return originalURL
+    }
+
+    if parsedURL.Scheme == "" && parsedURL.Host == "" {
         // Относительный URL, оставляем как есть
         return originalURL
     }
 
     // Изменяем URL, чтобы он проходил через прокси
     // Например: /bmstu.ru/path
-    var newURL string
-    if parsedURL.Scheme != "" && parsedURL.Host != "" {
-        // Полный URL
-        newURL = fmt.Sprintf("/%s%s", domain, parsedURL.Path)
-        if parsedURL.RawQuery != "" {
-            newURL += "?" + parsedURL.RawQuery
-        }
-        if parsedURL.Fragment != "" {
-            newURL += "#" + parsedURL.Fragment
-        }
-    } else {
-        // Относительный URL
-        newURL = originalURL
+    newURL := fmt.Sprintf("/%s%s", domain, parsedURL.Path)
+    if parsedURL.RawQuery != "" {
+        newURL += "?" + parsedURL.RawQuery
+    }
+    if parsedURL.Fragment != "" {
+        newURL += "#" + parsedURL.Fragment
     }
     return newURL
 }
+
