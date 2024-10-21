@@ -8,7 +8,6 @@ import (
     "net/http"
     "net/url"
     "strings"
-    "sync"
     "time"
 
     "github.com/patrickmn/go-cache"
@@ -17,22 +16,6 @@ import (
 
 // Инициализация кэша с временем жизни 10 минут и периодом очистки 15 минут
 var c = cache.New(10*time.Minute, 15*time.Minute)
-
-// Мьютекс для безопасного доступа к серверному хосту при многопоточности
-var mu sync.Mutex
-var serverIndex int
-var servers = []string{
-    "185.104.251.226:9742",
-    "185.102.139.161:9742",
-    "185.102.139.168:9742",
-    "185.102.139.169:9742",
-}
-
-// Структура для хранения кэшированного ответа
-type CachedResponse struct {
-    Headers map[string]string
-    Body    []byte
-}
 
 func main() {
     // Настройка обработчика прокси-запросов
@@ -48,7 +31,8 @@ func main() {
 // Обработчик прокси-запросов
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
     // Ожидаем URL вида /<domain>/<path>
-    parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+    trimmedPath := strings.TrimPrefix(r.URL.Path, "/")
+    parts := strings.SplitN(trimmedPath, "/", 2)
     if len(parts) == 0 || parts[0] == "" {
         http.Error(w, "Invalid request format. Use /<domain>/<path>", http.StatusBadRequest)
         return
@@ -130,6 +114,12 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
     }
     w.Header().Set("Content-Type", "text/html")
     w.Write(modifiedBody)
+}
+
+// Структура для хранения кэшированного ответа
+type CachedResponse struct {
+    Headers map[string]string
+    Body    []byte
 }
 
 // Функция переписывания HTML-контента
