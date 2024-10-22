@@ -1,190 +1,249 @@
 package main
 
 import (
-    "bytes"
-    "fmt"
-    "io"
-    "log"
-    "net/http"
-    "net/url"
-    "strings"
-    "time"
+	"bytes"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
-    "github.com/patrickmn/go-cache"
-    "golang.org/x/net/html"
+	"golang.org/x/net/html"
 )
 
-// Инициализация кэша с временем жизни 10 минут и периодом очистки 15 минут
-var c = cache.New(10*time.Minute, 15*time.Minute)
-
 func main() {
-    // Настройка обработчика прокси-запросов
-    http.HandleFunc("/", proxyHandler)
+	port := "9742"
+	fs := http.FileServer(http.Dir("./assets"))
+	http.Handle("/assets/", http.StripPrefix("/assets/", fs))
+	http.HandleFunc("/", proxyHandler)
 
-    serverAddress := ":9742"
-    fmt.Printf("Starting proxy server on %s...\n", serverAddress)
-    if err := http.ListenAndServe(serverAddress, nil); err != nil {
-        log.Fatalf("Failed to start server: %v", err)
-    }
+	fmt.Println("Proxy server running on port", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-// Обработчик прокси-запросов
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
-    // Ожидаем URL вида /<domain>/<path>
-    trimmedPath := strings.TrimPrefix(r.URL.Path, "/")
-    parts := strings.SplitN(trimmedPath, "/", 2)
-    if len(parts) == 0 || parts[0] == "" {
-        http.Error(w, "Invalid request format. Use /<domain>/<path>", http.StatusBadRequest)
-        return
-    }
-
-    domain := parts[0]
-    targetPath := ""
-    if len(parts) > 1 {
-        targetPath = parts[1]
-    }
-
-    // Формируем целевой URL
-    targetURL := fmt.Sprintf("https://%s/%s", domain, targetPath)
-    fmt.Printf("Fetching URL: %s\n", targetURL)
-
-    // Проверяем кэш
-    if cachedResponse, found := c.Get(targetURL); found {
-        fmt.Println("Serving from cache.")
-        for k, v := range cachedResponse.(CachedResponse).Headers {
-            w.Header().Set(k, v)
-        }
-        w.Write(cachedResponse.(CachedResponse).Body)
-        return
-    }
-
-    // Выполняем запрос к целевому серверу
-    client := &http.Client{
-        Timeout: 30 * time.Second,
-    }
-
-    req, err := http.NewRequest("GET", targetURL, nil)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
-        return
-    }
-
-    // Выполняем запрос
-    resp, err := client.Do(req)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to fetch target URL: %v", err), http.StatusBadGateway)
-        return
-    }
-    defer resp.Body.Close()
-
-    // Читаем тело ответа
-    body, err := io.ReadAll(resp.Body)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to read response body: %v", err), http.StatusInternalServerError)
-        return
-    }
-
-    // Парсим и модифицируем HTML
-    modifiedBody, err := rewriteHTML(body, r)
-    if err != nil {
-        http.Error(w, fmt.Sprintf("Failed to parse HTML: %v", err), http.StatusInternalServerError)
-        return
-    }
-
-    // Копируем заголовки из оригинального ответа
-    headers := make(map[string]string)
-    for k, v := range resp.Header {
-        if len(v) > 0 {
-            headers[k] = v[0]
-        }
-    }
-
-    // Сохраняем в кэш
-    c.Set(targetURL, CachedResponse{
-        Headers: headers,
-        Body:    modifiedBody,
-    }, cache.DefaultExpiration)
-
-    // Возвращаем модифицированный контент клиенту
-    for k, v := range headers {
-        // Избегаем перезаписи некоторых заголовков
-        if k != "Content-Length" && k != "Transfer-Encoding" {
-            w.Header().Set(k, v)
-        }
-    }
-    w.Header().Set("Content-Type", "text/html")
-    w.Write(modifiedBody)
+	targetPath := strings.TrimPrefix(r.URL.Path, "/")
+	if targetPath == "" {
+		http.Error(w, "The target URL is not specified.", http.StatusBadRequest)
+		return
+	}
+	targetURLStr := ""
+	if strings.HasPrefix(targetPath, "www.") || strings.HasPrefix(targetPath, "http") {
+		targetURLStr = "https://" + targetPath
+	} else {
+		targetURLStr = "https://" + targetPath
+	}
+	targetURL, err := url.Parse(targetURLStr)
+	if err != nil {
+		http.Error(w, "Invalid target URL.", http.StatusBadRequest)
+		return
+	}
+	req, err := http.NewRequest(r.Method, targetURL.String(), nil)
+	if err != nil {
+		http.Error(w, "An error occurred while creating a request to the target URL.", http.StatusInternalServerError)
+		return
+	}
+	req.Header = r.Header.Clone()
+	req.Header.Set("Accept-Encoding", "gzip")
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to get target URL", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		reader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			http.Error(w, "Error unpacking gzip-response.", http.StatusInternalServerError)
+			return
+		}
+		defer reader.(*gzip.Reader).Close()
+	}
+	resp.Header.Del("Content-Encoding")
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/html") {
+		bodyBytes, err := ioutil.ReadAll(reader)
+		if err != nil {
+			http.Error(w, "Failed to read response body.", http.StatusInternalServerError)
+			return
+		}
+		modifiedBody, err := processHTML(bodyBytes, targetURL, r.Host)
+		if err != nil {
+			http.Error(w, "Failed to parse HTML.", http.StatusInternalServerError)
+			return
+		}
+		w.Write(modifiedBody)
+	} else if strings.Contains(contentType, "text/css") || strings.Contains(contentType, "application/javascript") {
+		bodyBytes, err := ioutil.ReadAll(reader)
+		if err != nil {
+			http.Error(w, "Failed to read response body.", http.StatusInternalServerError)
+			return
+		}
+		modifiedBody := processAssets(bodyBytes, targetURL, r.Host)
+		w.Write(modifiedBody)
+	} else {
+		io.Copy(w, reader)
+	}
 }
 
-// Структура для хранения кэшированного ответа
-type CachedResponse struct {
-    Headers map[string]string
-    Body    []byte
+func processHTML(body []byte, baseURL *url.URL, proxyHost string) ([]byte, error) {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			for i, attr := range n.Attr {
+				if attr.Key == "href" || attr.Key == "src" || attr.Key == "action" {
+					origLink := attr.Val
+					if origLink == "" || strings.HasPrefix(origLink, "#") {
+						continue
+					}
+					linkURL, err := baseURL.Parse(origLink)
+					if err != nil || linkURL.Scheme == "data" || linkURL.Scheme == "mailto" || linkURL.Scheme == "javascript" {
+						continue
+					}
+					if isAsset(linkURL.Path, n, attr.Key) {
+						localPath, err := downloadAndSave(linkURL)
+						if err == nil {
+							n.Attr[i].Val = "/assets/" + localPath
+						}
+					} else {
+						proxiedPath := "/" + linkURL.Host + linkURL.RequestURI()
+						n.Attr[i].Val = "http://" + proxyHost + proxiedPath
+					}
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+	var buf bytes.Buffer
+	html.Render(&buf, doc)
+	return buf.Bytes(), nil
 }
 
-// Функция переписывания HTML-контента
-func rewriteHTML(body []byte, r *http.Request) ([]byte, error) {
-    doc, err := html.Parse(bytes.NewReader(body))
-    if err != nil {
-        return nil, err
-    }
+func isAsset(path string, node *html.Node, attrKey string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".woff", ".woff2", ".ttf", ".eot":
+		return true
+	case "":
+		if node.Data == "link" && attrKey == "href" {
+			for _, attr := range node.Attr {
+				if attr.Key == "rel" && strings.Contains(attr.Val, "stylesheet") {
+					return true
+				}
+			}
+		}
+		if node.Data == "script" && attrKey == "src" {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
+}
 
-    var f func(*html.Node)
-    f = func(n *html.Node) {
-        if n.Type == html.ElementNode {
-            var attrName string
-            if n.Data == "a" || n.Data == "link" {
-                attrName = "href"
-            } else if n.Data == "script" || n.Data == "img" {
-                attrName = "src"
-            }
+func downloadAndSave(linkURL *url.URL) (string, error) {
+	req, err := http.NewRequest("GET", linkURL.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		reader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		defer reader.(*gzip.Reader).Close()
+	}
+	bodyBytes, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/css") || strings.Contains(contentType, "javascript") {
+		bodyBytes = processAssets(bodyBytes, linkURL, "")
+	}
+	assetPath := filepath.Join("assets", linkURL.Host, linkURL.Path)
+	dirPath := filepath.Dir(assetPath)
+	err = os.MkdirAll(dirPath, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	err = ioutil.WriteFile(assetPath, bodyBytes, os.ModePerm)
+	if err != nil {
+		return "", err
+	}
+	localPath := filepath.Join(linkURL.Host, linkURL.Path)
+	return localPath, nil
+}
 
-            if attrName != "" {
-                for i, attr := range n.Attr {
-                    if attr.Key == attrName {
-                        originalURL := attr.Val
-                        // Обрабатываем только относительные и абсолютные URL
-                        parsedURL, err := url.Parse(originalURL)
-                        if err == nil && (parsedURL.Scheme == "http" || parsedURL.Scheme == "https" || parsedURL.IsAbs()) {
-                            var targetDomain string
-                            if parsedURL.Host != "" {
-                                targetDomain = parsedURL.Host
-                            } else {
-                                // Относительный URL, используем текущий домен
-                                host := r.Host
-                                hostParts := strings.Split(host, ":")
-                                targetDomain = hostParts[0]
-                            }
-
-                            // Переписываем URL через прокси
-                            newURL := fmt.Sprintf("http://185.104.251.226:9742/%s%s", targetDomain, parsedURL.Path)
-                            if parsedURL.RawQuery != "" {
-                                newURL += "?" + parsedURL.RawQuery
-                            }
-                            if parsedURL.Fragment != "" {
-                                newURL += "#" + parsedURL.Fragment
-                            }
-
-                            n.Attr[i].Val = newURL
-                        }
-                    }
-                }
-            }
-        }
-
-        // Рекурсивный вызов для дочерних узлов
-        for c := n.FirstChild; c != nil; c = c.NextSibling {
-            f(c)
-        }
-    }
-
-    f(doc)
-
-    // Рендерим изменённый HTML обратно в []byte
-    var buf bytes.Buffer
-    if err := html.Render(&buf, doc); err != nil {
-        return nil, err
-    }
-
-    return buf.Bytes(), nil
+func processAssets(content []byte, baseURL *url.URL, proxyHost string) []byte {
+	contentStr := string(content)
+	reCSS := regexp.MustCompile(`url\(['"]?(.*?)['"]?\)`)
+	contentStr = reCSS.ReplaceAllStringFunc(contentStr, func(match string) string {
+		urlMatch := reCSS.FindStringSubmatch(match)
+		if len(urlMatch) > 1 {
+			origURL := urlMatch[1]
+			if strings.HasPrefix(origURL, "data:") || strings.HasPrefix(origURL, "#") {
+				return match
+			}
+			assetURL, err := baseURL.Parse(origURL)
+			if err != nil {
+				return match
+			}
+			localPath, err := downloadAndSave(assetURL)
+			if err != nil {
+				return match
+			}
+			newURL := "/assets/" + localPath
+			return fmt.Sprintf(`url('%s')`, newURL)
+		}
+		return match
+	})
+	reJS := regexp.MustCompile(`(src|href)=['"]([^'"]+)['"]`)
+	contentStr = reJS.ReplaceAllStringFunc(contentStr, func(match string) string {
+		parts := reJS.FindStringSubmatch(match)
+		if len(parts) > 2 {
+			attr := parts[1]
+			origURL := parts[2]
+			if strings.HasPrefix(origURL, "data:") || strings.HasPrefix(origURL, "#") {
+				return match
+			}
+			assetURL, err := baseURL.Parse(origURL)
+			if err != nil {
+				return match
+			}
+			localPath, err := downloadAndSave(assetURL)
+			if err != nil {
+				return match
+			}
+			newURL := "/assets/" + localPath
+			return fmt.Sprintf(`%s='%s'`, attr, newURL)
+		}
+		return match
+	})
+	return []byte(contentStr)
 }
