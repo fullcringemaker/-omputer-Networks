@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define MAX 80
-#define PORT 8095
+#define PORT 9742
 #define SA struct sockaddr
 
 void handle_request(char *request, char *result) {
