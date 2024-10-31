@@ -2,13 +2,12 @@
 package main
 
 import (
-    "bufio"
     "fmt"
-    "io"
     "log"
     "os"
 
     "golang.org/x/crypto/ssh"
+    "golang.org/x/term"
 )
 
 func main() {
@@ -35,14 +34,21 @@ func main() {
     }
     defer session.Close()
 
-    // Настройка стандартных потоков ввода/вывода
-    session.Stdout = os.Stdout
-    session.Stderr = os.Stderr
+    // Получение файлового дескриптора терминала
+    fd := int(os.Stdin.Fd())
 
-    // Создание каналов для обработки ввода
-    stdin, err := session.StdinPipe()
+    // Переключение терминала в сырой режим
+    oldState, err := term.MakeRaw(fd)
     if err != nil {
-        log.Fatalf("Не удалось настроить stdin: %s", err)
+        log.Fatalf("Не удалось переключить терминал в сырой режим: %s", err)
+    }
+    defer term.Restore(fd, oldState)
+
+    // Получение размеров терминала
+    width, height, err := term.GetSize(fd)
+    if err != nil {
+        width = 80
+        height = 24
     }
 
     // Запрос псевдотерминала
@@ -52,31 +58,22 @@ func main() {
         ssh.TTY_OP_OSPEED: 14400, // Скорость вывода
     }
 
-    if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
+    if err := session.RequestPty("xterm", height, width, modes); err != nil {
         log.Fatalf("Не удалось запросить псевдотерминал: %s", err)
     }
+
+    // Настройка стандартных потоков ввода/вывода
+    session.Stdin = os.Stdin
+    session.Stdout = os.Stdout
+    session.Stderr = os.Stderr
 
     // Запуск shell
     if err := session.Shell(); err != nil {
         log.Fatalf("Не удалось запустить shell: %s", err)
     }
 
-    // Чтение ввода пользователя и отправка на сервер
-    go func() {
-        scanner := bufio.NewScanner(os.Stdin)
-        for scanner.Scan() {
-            line := scanner.Text() + "\n"
-            _, err := io.WriteString(stdin, line)
-            if err != nil {
-                log.Printf("Ошибка записи в stdin: %s", err)
-                break
-            }
-        }
-    }()
-
     // Ожидание завершения сессии
     if err := session.Wait(); err != nil {
-        log.Printf("Сессия завершилась с ошибкой: %s", err)
+        fmt.Printf("Сессия завершилась с ошибкой: %s\n", err)
     }
 }
-
