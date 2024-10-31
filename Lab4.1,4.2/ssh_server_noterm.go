@@ -125,7 +125,6 @@ func main() {
 			return ctx.User() == "testuser" && password == "password123"
 		},
 	}
-
 	log.Println("Запуск SSH-сервера на порту 9742...")
 	log.Fatal(server.ListenAndServe())
 }
