@@ -1,9 +1,2 @@
-PS C:\Users\dmitr> ssh -p 9742 testuser@185.102.139.161
-The authenticity of host '[185.102.139.161]:9742 ([185.102.139.161]:9742)' can't be established.
-RSA key fingerprint is SHA256:b5BqchCjTVOkOtIxI9eNwqZ/IGIAKzqhE4aYwrRa67o.
-This key is not known by any other names.
-Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
-Warning: Permanently added '[185.102.139.161]:9742' (RSA) to the list of known hosts.
-testuser@185.102.139.161's password:
-Пожалуйста, введите команду.
-Connection to 185.102.139.161 closed.
+На этапе проверки работы кода что то идёт не так
+Когда я запускаю кол командой go run ssh_client.go, мне на строчке ниже высвечивается >, однако при написании mkdir testdir ничего не происходит на сервере, а в терминале на клиенте мне после отправки сообщения mkdir testdir и нажатия enter не пишется никаких сообщений, а выводится та же надпись mkdir testdir на строчке ниже с возможностью отправки этого, что также не ведёт ни к чему 
