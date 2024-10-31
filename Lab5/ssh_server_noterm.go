@@ -1,4 +1,3 @@
-// ssh_server.go
 package main
 
 import (
@@ -18,7 +17,6 @@ func main() {
 		Handler: func(s ssh.Session) {
 			term := terminal.NewTerminal(s, "> ")
 			for {
-				// Чтение команды от пользователя
 				line, err := term.ReadLine()
 				if err != nil {
 					if err == io.EOF {
@@ -28,7 +26,6 @@ func main() {
 					continue
 				}
 
-				// Разбор команды
 				args := strings.Fields(line)
 				if len(args) == 0 {
 					continue
