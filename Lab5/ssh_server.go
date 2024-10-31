@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/gliderlabs/ssh"
-	"golang.org/x/term"
+	terminal "golang.org/x/term"
 )
 
 func main() {
