@@ -25,7 +25,7 @@ func main() {
 					io.WriteString(s, "Ошибка чтения команды: "+err.Error()+"\n")
 					continue
 				}
-
+				
 				args := strings.Fields(line)
 				if len(args) == 0 {
 					continue
