@@ -11,22 +11,22 @@ import (
 
 func main() {
 	config := &ssh.ClientConfig{
-		User: "testuser", 
+		User: "testuser",
 		Auth: []ssh.AuthMethod{
-			ssh.Password("password123"), 
+			ssh.Password("password123"),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
-	client, err := ssh.Dial("tcp", "185.102.139.161:9742", config)
+	client, err := ssh.Dial("tcp", "185.102.139.168:9742", config)
 	if err != nil {
-		log.Fatalf("Не удалось подключиться к SSH-серверу: %s", err)
+		log.Fatalf("Failed to connect to SSH server: %s", err)
 	}
 	defer client.Close()
 
 	session, err := client.NewSession()
 	if err != nil {
-		log.Fatalf("Не удалось создать сессию: %s", err)
+		log.Fatalf("Failed to create session: %s", err)
 	}
 	defer session.Close()
 
@@ -34,7 +34,7 @@ func main() {
 
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		log.Fatalf("Не удалось переключить терминал в сырой режим: %s", err)
+		log.Fatalf("Failed to switch terminal to raw mode: %s", err)
 	}
 	defer term.Restore(fd, oldState)
 
@@ -45,13 +45,13 @@ func main() {
 	}
 
 	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,     
-		ssh.TTY_OP_ISPEED: 14400, 
-		ssh.TTY_OP_OSPEED: 14400, 
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
 	}
 
 	if err := session.RequestPty("xterm", height, width, modes); err != nil {
-		log.Fatalf("Не удалось запросить псевдотерминал: %s", err)
+		log.Fatalf("Failed to request pseudo-terminal: %s", err)
 	}
 
 	session.Stdin = os.Stdin
@@ -59,10 +59,10 @@ func main() {
 	session.Stderr = os.Stderr
 
 	if err := session.Shell(); err != nil {
-		log.Fatalf("Не удалось запустить shell: %s", err)
+		log.Fatalf("Failed to start shell: %s", err)
 	}
 
 	if err := session.Wait(); err != nil {
-		fmt.Printf("Сессия завершилась с ошибкой: %s\n", err)
+		fmt.Printf("The session ended with an error: %s\n", err)
 	}
 }
