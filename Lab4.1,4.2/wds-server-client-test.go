@@ -22,7 +22,6 @@ func main() {
 		log.Fatalf("Failed to connect to SSH-server: %s", err)
 	}
 	defer client.Close()
-
 	session, err := client.NewSession()
 	if err != nil {
 		log.Fatalf("Failed to create session: %s", err)
