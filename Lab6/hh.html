@@ -1,1 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Новости</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>Новости</h1>
+    <table id="newsTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Заголовок</th>
+                <th>Описание</th>
+                <th>Дата</th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+
+    <script>
+        var ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+        ws.onmessage = function(event) {
+            var newsItems = JSON.parse(event.data);
+            var tbody = document.getElementById('newsTable').getElementsByTagName('tbody')[0];
+            tbody.innerHTML = '';
+
+            newsItems.forEach(function(item) {
+                var row = tbody.insertRow();
+                var cellID = row.insertCell(0);
+                var cellTitle = row.insertCell(1);
+                var cellDescription = row.insertCell(2);
+                var cellDate = row.insertCell(3);
+
+                cellID.textContent = item.ID;
+                cellTitle.textContent = item.Title;
+                cellDescription.innerHTML = item.Description;
+                cellDate.textContent = item.Date;
+            });
+        };
+    </script>
+</body>
+</html>
 
