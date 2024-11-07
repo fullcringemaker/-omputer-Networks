@@ -1,313 +1,233 @@
 package main
 
 import (
-    "database/sql"
-    "fmt"
-    "html/template"
-    "io"
-    "log"
-    "net/http"
-    "sync"
-    "time"
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"sync"
+	"time"
 
-    "github.com/gorilla/websocket"
-    "github.com/SlyMarbo/rss"
-    _ "github.com/go-sql-driver/mysql"
+	"github.com/mmcdole/gofeed"
+	"github.com/gorilla/websocket"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type NewsItem struct {
-    ID          int    `json:"id"`
-    Title       string `json:"title"`
-    Description string `json:"description"`
-    Date        string `json:"date"`
-    Link        string `json:"link"`
+	ID          int
+	Title       string
+	Description string
+	Date        string
 }
 
 var (
-    db            *sql.DB
-    newsItems     []NewsItem
-    newsItemsLock sync.Mutex
-
-    clients     = make(map[*websocket.Conn]bool)
-    clientsLock sync.Mutex
-    broadcast   = make(chan []NewsItem)
-    upgrader    = websocket.Upgrader{}
+	db            *sql.DB
+	clients       = make(map[*websocket.Conn]bool)
+	broadcast     = make(chan []NewsItem)
+	upgrader      = websocket.Upgrader{}
+	clientsMutex  sync.Mutex
+	lastNewsItems []NewsItem
 )
 
 func main() {
-    var err error
-    // Подключение к базе данных
-    db, err = sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su)/iu9networkslabs")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
+	var err error
+	// Подключение к базе данных
+	db, err = sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su)/iu9networkslabs")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
-    // Создание таблицы, если не существует
-    err = createTableIfNotExists()
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Создание таблицы, если она не существует
+	createTable()
 
-    // Парсинг RSS и обновление базы данных
-    err = updateNewsFromRSS()
-    if err != nil {
-        log.Println("Ошибка обновления новостей из RSS:", err)
-    }
+	// Запуск парсинга RSS-ленты в отдельной горутине
+	go fetchRSSFeed()
 
-    // Загрузка новостей из базы данных
-    err = loadNewsItemsFromDB()
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Запуск мониторинга изменений в базе данных
+	go monitorDatabaseChanges()
 
-    // Настройка маршрутов HTTP-сервера
-    http.HandleFunc("/", handleDashboard)
-    http.HandleFunc("/ws", handleConnections)
+	// Запуск обработки сообщений для WebSocket клиентов
+	go handleMessages()
 
-    // Запуск горутины для рассылки обновлений
-    go handleBroadcast()
+	// Обслуживание статических файлов
+	http.Handle("/", http.FileServer(http.Dir("./")))
 
-    // Запуск периодических задач
-    go startPeriodicTasks()
+	// WebSocket endpoint
+	http.HandleFunc("/ws", handleConnections)
 
-    log.Println("Сервер запущен на :9742")
-    err = http.ListenAndServe(":9742", nil)
-    if err != nil {
-        log.Fatal("ListenAndServe: ", err)
-    }
+	// Endpoint для ручного запуска парсинга
+	http.HandleFunc("/parse", parseHandler)
+
+	// Запуск сервера на порту 9742
+	fmt.Println("Server starting on port 9742")
+	err = http.ListenAndServe(":9742", nil)
+	if err != nil {
+		log.Fatal("ListenAndServe: ", err)
+	}
 }
 
-func createTableIfNotExists() error {
-    query := `
-    CREATE TABLE IF NOT EXISTS iu9Trofimenko (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(255),
-        description TEXT,
-        date VARCHAR(10),
-        link VARCHAR(255)
-    )
-    `
-    _, err := db.Exec(query)
-    return err
+func createTable() {
+	query := `
+	CREATE TABLE IF NOT EXISTS iu9Trofimenko (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		title VARCHAR(255),
+		description TEXT,
+		date VARCHAR(10)
+	)
+	`
+	_, err := db.Exec(query)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func updateNewsFromRSS() error {
-    // Создаём HTTP клиент
-    client := &http.Client{}
-
-    // Создаём запрос с установкой User-Agent
-    req, err := http.NewRequest("GET", "https://rospotrebnadzor.ru/region/rss/rss.php?rss=y", nil)
-    if err != nil {
-        return err
-    }
-    req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader)")
-
-    // Выполняем запрос
-    resp, err := client.Do(req)
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
-
-    if resp.StatusCode != http.StatusOK {
-        return fmt.Errorf("failed to fetch RSS feed: status code %d", resp.StatusCode)
-    }
-
-    // Читаем тело ответа
-    body, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return err
-    }
-
-    // Парсим RSS фид
-    feed, err := rss.Parse(body)
-    if err != nil {
-        // Логируем тело ответа для отладки
-        log.Println("Не удалось распарсить RSS фид. Тело ответа:")
-        log.Println(string(body))
-        return err
-    }
-
-    for _, item := range feed.Items {
-        pubDate := item.Date.Format("02.01.2006")
-        link := item.Link
-
-        var exists bool
-        err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM iu9Trofimenko WHERE link = ?)", link).Scan(&exists)
-        if err != nil {
-            log.Println("Ошибка проверки существования записи:", err)
-            continue
-        }
-
-        if exists {
-            var dbTitle, dbDescription string
-            err = db.QueryRow("SELECT title, description FROM iu9Trofimenko WHERE link = ?", link).Scan(&dbTitle, &dbDescription)
-            if err != nil {
-                log.Println("Ошибка получения записи:", err)
-                continue
-            }
-            if dbTitle != item.Title || dbDescription != item.Summary {
-                _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, date = ? WHERE link = ?", item.Title, item.Summary, pubDate, link)
-                if err != nil {
-                    log.Println("Ошибка обновления записи:", err)
-                    continue
-                }
-            }
-        } else {
-            _, err = db.Exec("INSERT INTO iu9Trofimenko (title, description, date, link) VALUES (?, ?, ?, ?)", item.Title, item.Summary, pubDate, link)
-            if err != nil {
-                log.Println("Ошибка вставки новой записи:", err)
-                continue
-            }
-        }
-    }
-
-    return nil
+func fetchRSSFeed() {
+	for {
+		fetchAndUpdateRSSFeed()
+		time.Sleep(10 * time.Minute)
+	}
 }
 
-func loadNewsItemsFromDB() error {
-    rows, err := db.Query("SELECT id, title, description, date, link FROM iu9Trofimenko")
-    if err != nil {
-        return err
-    }
-    defer rows.Close()
+func fetchAndUpdateRSSFeed() {
+	fp := gofeed.NewParser()
+	feed, err := fp.ParseURL("https://rospotrebnadzor.ru/region/rss/rss.php?rss=y")
+	if err != nil {
+		log.Println("Error fetching RSS feed:", err)
+		return
+	}
 
-    var items []NewsItem
-    for rows.Next() {
-        var item NewsItem
-        err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.Date, &item.Link)
-        if err != nil {
-            return err
-        }
-        items = append(items, item)
-    }
-    newsItemsLock.Lock()
-    newsItems = items
-    newsItemsLock.Unlock()
-    return nil
+	for _, item := range feed.Items {
+		date := item.PublishedParsed.Format("02.01.2006")
+		// Проверка существования новости в базе данных
+		var id int
+		err := db.QueryRow("SELECT id FROM iu9Trofimenko WHERE title=? AND date=?", item.Title, date).Scan(&id)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				// Вставка новой новости
+				_, err := db.Exec("INSERT INTO iu9Trofimenko (title, description, date) VALUES (?, ?, ?)",
+					item.Title, item.Content, date)
+				if err != nil {
+					log.Println("Error inserting item:", err)
+				} else {
+					log.Println("Inserted new item:", item.Title)
+				}
+			} else {
+				log.Println("Error querying item:", err)
+			}
+		}
+	}
+
+	// Отправка обновленных новостей клиентам
+	newsItems := getNewsItems()
+	broadcast <- newsItems
 }
 
-func handleDashboard(w http.ResponseWriter, r *http.Request) {
-    tmpl := template.Must(template.ParseFiles("dashboard.html"))
-    err := tmpl.Execute(w, nil)
-    if err != nil {
-        http.Error(w, "Ошибка отображения шаблона", http.StatusInternalServerError)
-        return
-    }
+func getNewsItems() []NewsItem {
+	rows, err := db.Query("SELECT id, title, description, date FROM iu9Trofimenko ORDER BY id DESC")
+	if err != nil {
+		log.Println("Error querying news items:", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var newsItems []NewsItem
+	for rows.Next() {
+		var item NewsItem
+		err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.Date)
+		if err != nil {
+			log.Println("Error scanning news item:", err)
+			continue
+		}
+		newsItems = append(newsItems, item)
+	}
+
+	return newsItems
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
-    upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+	// Обновление запроса до WebSocket
+	upgrader.CheckOrigin = func(r *http.Request) bool { return true } // Разрешить любые источники
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	// Регистрация нового клиента
+	clientsMutex.Lock()
+	clients[ws] = true
+	clientsMutex.Unlock()
 
-    ws, err := upgrader.Upgrade(w, r, nil)
-    if err != nil {
-        log.Println("Ошибка обновления до вебсокета:", err)
-        return
-    }
-    defer ws.Close()
+	// Отправка текущих новостей новому клиенту
+	newsItems := getNewsItems()
+	err = ws.WriteJSON(newsItems)
+	if err != nil {
+		log.Println("Error sending initial news items:", err)
+		ws.Close()
+		clientsMutex.Lock()
+		delete(clients, ws)
+		clientsMutex.Unlock()
+		return
+	}
 
-    clientsLock.Lock()
-    clients[ws] = true
-    clientsLock.Unlock()
-
-    // Отправка начальных данных клиенту
-    newsItemsLock.Lock()
-    err = ws.WriteJSON(newsItems)
-    newsItemsLock.Unlock()
-    if err != nil {
-        log.Println("Ошибка отправки начальных данных:", err)
-    }
-
-    // Прослушивание сообщений от клиента (если необходимо)
-    for {
-        _, _, err := ws.ReadMessage()
-        if err != nil {
-            clientsLock.Lock()
-            delete(clients, ws)
-            clientsLock.Unlock()
-            break
-        }
-    }
+	for {
+		var msg interface{}
+		err := ws.ReadJSON(&msg)
+		if err != nil {
+			// Клиент отключился
+			clientsMutex.Lock()
+			delete(clients, ws)
+			clientsMutex.Unlock()
+			ws.Close()
+			break
+		}
+	}
 }
 
-func handleBroadcast() {
-    for {
-        items := <-broadcast
-        clientsLock.Lock()
-        for client := range clients {
-            err := client.WriteJSON(items)
-            if err != nil {
-                log.Printf("Ошибка рассылки клиенту: %v", err)
-                client.Close()
-                delete(clients, client)
-            }
-        }
-        clientsLock.Unlock()
-    }
+func handleMessages() {
+	for {
+		// Получение следующего сообщения из канала broadcast
+		newsItems := <-broadcast
+
+		// Отправка сообщения всем подключенным клиентам
+		clientsMutex.Lock()
+		for client := range clients {
+			err := client.WriteJSON(newsItems)
+			if err != nil {
+				log.Printf("WebSocket error: %v", err)
+				client.Close()
+				delete(clients, client)
+			}
+		}
+		clientsMutex.Unlock()
+	}
 }
 
-func startPeriodicTasks() {
-    // Периодическое обновление новостей из RSS
-    rssTicker := time.NewTicker(5 * time.Minute)
-    go func() {
-        for {
-            <-rssTicker.C
-            err := updateNewsFromRSS()
-            if err != nil {
-                log.Println("Ошибка обновления новостей из RSS:", err)
-            }
-        }
-    }()
-
-    // Периодическая проверка изменений в базе данных
-    dbTicker := time.NewTicker(10 * time.Second)
-    go func() {
-        for {
-            <-dbTicker.C
-            var updated bool
-            var newItems []NewsItem
-            // Загрузка новостей из базы данных
-            rows, err := db.Query("SELECT id, title, description, date, link FROM iu9Trofimenko")
-            if err != nil {
-                log.Println("Ошибка запроса к базе данных:", err)
-                continue
-            }
-            defer rows.Close()
-
-            for rows.Next() {
-                var item NewsItem
-                err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.Date, &item.Link)
-                if err != nil {
-                    log.Println("Ошибка сканирования строки:", err)
-                    continue
-                }
-                newItems = append(newItems, item)
-            }
-
-            newsItemsLock.Lock()
-            if !newsItemsEqual(newsItems, newItems) {
-                newsItems = newItems
-                updated = true
-            }
-            newsItemsLock.Unlock()
-
-            if updated {
-                // Рассылка нового списка клиентам
-                broadcast <- newItems
-            }
-        }
-    }()
+func monitorDatabaseChanges() {
+	ticker := time.NewTicker(30 * time.Second)
+	for range ticker.C {
+		newsItems := getNewsItems()
+		if !isEqual(newsItems, lastNewsItems) {
+			lastNewsItems = newsItems
+			broadcast <- newsItems
+		}
+	}
 }
 
-func newsItemsEqual(a, b []NewsItem) bool {
-    if len(a) != len(b) {
-        return false
-    }
-    for i := range a {
-        if a[i] != b[i] {
-            return false
-        }
-    }
-    return true
+func isEqual(a, b []NewsItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, itemA := range a {
+		itemB := b[i]
+		if itemA.ID != itemB.ID || itemA.Title != itemB.Title || itemA.Description != itemB.Description || itemA.Date != itemB.Date {
+			return false
+		}
+	}
+	return true
+}
+
+func parseHandler(w http.ResponseWriter, r *http.Request) {
+	fetchAndUpdateRSSFeed()
+	fmt.Fprintf(w, "Parsing completed")
 }
