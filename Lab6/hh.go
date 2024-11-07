@@ -4,6 +4,7 @@ import (
     "database/sql"
     "fmt"
     "html/template"
+    "io"
     "log"
     "net/http"
     "sync"
@@ -92,8 +93,39 @@ func createTableIfNotExists() error {
 }
 
 func updateNewsFromRSS() error {
-    feed, err := rss.Fetch("https://rospotrebnadzor.ru/region/rss/rss.php?rss=y")
+    // Создаём HTTP клиент
+    client := &http.Client{}
+
+    // Создаём запрос с установкой User-Agent
+    req, err := http.NewRequest("GET", "https://rospotrebnadzor.ru/region/rss/rss.php?rss=y", nil)
     if err != nil {
+        return err
+    }
+    req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader)")
+
+    // Выполняем запрос
+    resp, err := client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("failed to fetch RSS feed: status code %d", resp.StatusCode)
+    }
+
+    // Читаем тело ответа
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return err
+    }
+
+    // Парсим RSS фид
+    feed, err := rss.Parse(body)
+    if err != nil {
+        // Логируем тело ответа для отладки
+        log.Println("Не удалось распарсить RSS фид. Тело ответа:")
+        log.Println(string(body))
         return err
     }
 
