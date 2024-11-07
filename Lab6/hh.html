@@ -9,7 +9,7 @@
     <div id="news"></div>
 
     <script>
-        var ws = new WebSocket("ws://localhost:9742/ws");
+        var ws = new WebSocket("ws://" + location.host + "/ws");
         ws.onmessage = function(event) {
             var items = JSON.parse(event.data);
             var newsDiv = document.getElementById("news");
