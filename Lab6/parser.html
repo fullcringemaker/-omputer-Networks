@@ -1,8 +1,17 @@
-{{range .}}
-    <div class="news-item">
-        <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-        <p>{{.Description}}</p>
-        <small>{{.PubDate.Format "02.01.2006 15:04"}}</small>
-        <hr>
-    </div>
-{{end}}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Parsed News</title>
+</head>
+<body>
+    <h1>Parsed News</h1>
+    {{range .}}
+        <div class="news-item">
+            <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+            <p>{{.Description}}</p>
+            <small>{{.PubDate}}</small>
+            <hr>
+        </div>
+    {{end}}
+</body>
+</html>
