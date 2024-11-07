@@ -134,7 +134,8 @@ func alterTable(db *sql.DB) error {
     }
     defer rows.Close()
     for rows.Next() {
-        var field, dataType, null, key, defaultValue, extra string
+        var field, dataType, null, key, extra string
+        var defaultValue sql.NullString
         err = rows.Scan(&field, &dataType, &null, &key, &defaultValue, &extra)
         if err != nil {
             return err
@@ -164,7 +165,7 @@ func alterTable(db *sql.DB) error {
         }
     }
 
-    // Add unique key on link
+    // Add unique key on link if it's newly added
     if !columns["link"] {
         _, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD UNIQUE KEY unique_link (link)", tableName))
         if err != nil {
