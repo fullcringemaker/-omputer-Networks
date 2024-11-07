@@ -10,7 +10,7 @@ import (
     "time"
 
     "github.com/gorilla/websocket"
-    "github.com/mmcdole/gofeed"
+    "github.com/SlyMarbo/rss"
     _ "github.com/go-sql-driver/mysql"
 )
 
@@ -27,10 +27,10 @@ var (
     newsItems     []NewsItem
     newsItemsLock sync.Mutex
 
-    clients      = make(map[*websocket.Conn]bool)
-    clientsLock  sync.Mutex
-    broadcast    = make(chan []NewsItem)
-    upgrader     = websocket.Upgrader{}
+    clients     = make(map[*websocket.Conn]bool)
+    clientsLock sync.Mutex
+    broadcast   = make(chan []NewsItem)
+    upgrader    = websocket.Upgrader{}
 )
 
 func main() {
@@ -92,14 +92,13 @@ func createTableIfNotExists() error {
 }
 
 func updateNewsFromRSS() error {
-    fp := gofeed.NewParser()
-    feed, err := fp.ParseURL("https://rospotrebnadzor.ru/region/rss/rss.php?rss=y")
+    feed, err := rss.Fetch("https://rospotrebnadzor.ru/region/rss/rss.php?rss=y")
     if err != nil {
         return err
     }
 
     for _, item := range feed.Items {
-        date := item.PublishedParsed.Format("02.01.2006")
+        pubDate := item.Date.Format("02.01.2006")
         link := item.Link
 
         var exists bool
@@ -116,15 +115,15 @@ func updateNewsFromRSS() error {
                 log.Println("Ошибка получения записи:", err)
                 continue
             }
-            if dbTitle != item.Title || dbDescription != item.Description {
-                _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, date = ? WHERE link = ?", item.Title, item.Description, date, link)
+            if dbTitle != item.Title || dbDescription != item.Summary {
+                _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, date = ? WHERE link = ?", item.Title, item.Summary, pubDate, link)
                 if err != nil {
                     log.Println("Ошибка обновления записи:", err)
                     continue
                 }
             }
         } else {
-            _, err = db.Exec("INSERT INTO iu9Trofimenko (title, description, date, link) VALUES (?, ?, ?, ?)", item.Title, item.Description, date, link)
+            _, err = db.Exec("INSERT INTO iu9Trofimenko (title, description, date, link) VALUES (?, ?, ?, ?)", item.Title, item.Summary, pubDate, link)
             if err != nil {
                 log.Println("Ошибка вставки новой записи:", err)
                 continue
