@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Парсер</title>
+</head>
+<body>
+    <h1>Парсер</h1>
+    <button id="parseBtn">Запустить парсинг RSS-ленты</button>
+    <p id="status"></p>
+
+    <script>
+        document.getElementById('parseBtn').addEventListener('click', function() {
+            fetch('/parse')
+                .then(response => response.text())
+                .then(data => {
+                    document.getElementById('status').textContent = data;
+                });
+        });
+    </script>
+</body>
+</html>
