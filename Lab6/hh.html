@@ -1,36 +1,36 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Новости</title>
+    <title>News Dashboard</title>
 </head>
 <body>
-    <h1>Новости</h1>
+    <h1>News Dashboard</h1>
     <div id="news"></div>
 
-    <script>
+    <script type="text/javascript">
         var ws = new WebSocket("ws://" + window.location.host + "/ws");
 
         ws.onmessage = function(event) {
             var newsItems = JSON.parse(event.data);
-            var newsDiv = document.getElementById('news');
-            newsDiv.innerHTML = '';
+            var newsDiv = document.getElementById("news");
+            newsDiv.innerHTML = "";
+            for (var i = 0; i < newsItems.length; i++) {
+                var item = newsItems[i];
+                var div = document.createElement("div");
+                div.innerHTML = "<h2><a href='" + item.link + "' target='_blank'>" + item.title + "</a></h2>" +
+                                "<p>" + item.description + "</p>" +
+                                "<p>Date: " + item.pubDate + "</p>" +
+                                "<hr>";
+                newsDiv.appendChild(div);
+            }
+        };
 
-            newsItems.forEach(function(item) {
-                var newsItemDiv = document.createElement('div');
-                var title = document.createElement('h2');
-                title.textContent = item.Title;
-                var description = document.createElement('p');
-                description.innerHTML = item.Description;
-                var date = document.createElement('p');
-                date.textContent = item.Date;
+        ws.onopen = function() {
+            console.log("WebSocket connection established");
+        };
 
-                newsItemDiv.appendChild(title);
-                newsItemDiv.appendChild(description);
-                newsItemDiv.appendChild(date);
-
-                newsDiv.appendChild(newsItemDiv);
-            });
+        ws.onclose = function() {
+            console.log("WebSocket connection closed");
         };
     </script>
 </body>
