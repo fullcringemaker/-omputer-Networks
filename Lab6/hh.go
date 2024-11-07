@@ -1,17 +1,21 @@
 package main
 
 import (
+    "crypto/md5"
     "database/sql"
+    "encoding/hex"
     "encoding/json"
     "fmt"
     "html/template"
+    "io/ioutil"
     "log"
     "net/http"
+    "strings"
     "time"
 
     _ "github.com/go-sql-driver/mysql"
     "github.com/gorilla/websocket"
-    "github.com/mmcdole/gofeed"
+    "github.com/PuerkitoBio/goquery"
 )
 
 var clients = make(map[*websocket.Conn]bool)
@@ -31,14 +35,19 @@ func main() {
     }
     defer db.Close()
 
+    // Reset AUTO_INCREMENT to start from 1
+    _, err = db.Exec("ALTER TABLE iu9Trofimenko AUTO_INCREMENT = 1")
+    if err != nil {
+        log.Println("Error resetting AUTO_INCREMENT:", err)
+    }
+
     // Check if the table exists, create it if it doesn't
     _, err = db.Exec(`
     CREATE TABLE IF NOT EXISTS iu9Trofimenko (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        guid VARCHAR(255) UNIQUE,
         title TEXT,
         description TEXT,
-        pubDate VARCHAR(10),
+        date VARCHAR(10),
         link TEXT
     )
     `)
@@ -58,11 +67,11 @@ func main() {
 
     // Handle parser.html
     http.HandleFunc("/parser.html", func(w http.ResponseWriter, r *http.Request) {
-        // Parse RSS feed
-        feedItems, err := parseRSS(db)
+        // Parse Website
+        feedItems, err := parseWebsite(db)
         if err != nil {
-            log.Println("Error parsing RSS feed:", err)
-            http.Error(w, "Error parsing RSS feed", http.StatusInternalServerError)
+            log.Println("Error parsing website:", err)
+            http.Error(w, "Error parsing website", http.StatusInternalServerError)
             return
         }
 
@@ -106,10 +115,9 @@ func ensureTableSchema(db *sql.DB) error {
         Type string
     }{
         {"id", "INT AUTO_INCREMENT PRIMARY KEY"},
-        {"guid", "VARCHAR(255) UNIQUE"},
         {"title", "TEXT"},
         {"description", "TEXT"},
-        {"pubDate", "VARCHAR(10)"},
+        {"date", "VARCHAR(10)"},
         {"link", "TEXT"},
     }
 
@@ -131,81 +139,98 @@ func ensureTableSchema(db *sql.DB) error {
     return nil
 }
 
-func parseRSS(db *sql.DB) ([]map[string]string, error) {
-    feedURL := "https://news.rambler.ru/rss/technology/"
-    fp := gofeed.NewParser()
-    feed, err := fp.ParseURL(feedURL)
+func parseWebsite(db *sql.DB) ([]map[string]string, error) {
+    var feedItems []map[string]string
+
+    // Fetch the page
+    res, err := http.Get("https://news.rambler.ru/technology")
+    if err != nil {
+        return nil, err
+    }
+    defer res.Body.Close()
+
+    if res.StatusCode != 200 {
+        return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
+    }
+
+    // Load the HTML document
+    doc, err := goquery.NewDocumentFromReader(res.Body)
     if err != nil {
         return nil, err
     }
 
-    var feedItems []map[string]string
+    // Find the news items
+    doc.Find(".topline__newsitem, .listing__newsitem").Each(func(i int, s *goquery.Selection) {
+        title := s.Find(".news-item__title").Text()
+        link, _ := s.Find("a").Attr("href")
+        description := s.Find(".news-item__text").Text()
+        date := s.Find(".news-item__date").Text()
 
-    for _, item := range feed.Items {
-        guid := item.GUID
-        if guid == "" {
-            guid = item.Link // Fallback to link if GUID is empty
-        }
+        // Clean up the data
+        title = strings.TrimSpace(title)
+        description = strings.TrimSpace(description)
+        date = strings.TrimSpace(date)
 
-        title := item.Title
-        description := item.Description
-        link := item.Link
-
-        // Format pubDate to dd.mm.yyyy
-        var dateStr string
-        if item.PublishedParsed != nil {
-            dateStr = item.PublishedParsed.Format("02.01.2006")
+        // Convert date to dd.mm.yyyy format if possible
+        if date != "" {
+            parsedDate, err := time.Parse("02:15", date) // Adjust date format as needed
+            if err == nil {
+                date = parsedDate.Format("02.01.2006")
+            } else {
+                date = time.Now().Format("02.01.2006")
+            }
         } else {
-            dateStr = ""
+            date = time.Now().Format("02.01.2006")
         }
+
+        // Add to feedItems
+        item := map[string]string{
+            "Title":       title,
+            "Description": description,
+            "Link":        link,
+            "Date":        date,
+        }
+        feedItems = append(feedItems, item)
 
         // Check if the news item exists in the database
         var count int
-        err = db.QueryRow("SELECT COUNT(*) FROM iu9Trofimenko WHERE guid=?", guid).Scan(&count)
+        err := db.QueryRow("SELECT COUNT(*) FROM iu9Trofimenko WHERE title=? AND date=?", title, date).Scan(&count)
         if err != nil {
             log.Println("Error checking if news item exists:", err)
-            continue
+            return
         }
 
         if count == 0 {
             // Insert the news item into the database
-            _, err = db.Exec("INSERT INTO iu9Trofimenko (guid, title, description, pubDate, link) VALUES (?, ?, ?, ?, ?)",
-                guid, title, description, dateStr, link)
+            _, err = db.Exec("INSERT INTO iu9Trofimenko (title, description, date, link) VALUES (?, ?, ?, ?)",
+                title, description, date, link)
             if err != nil {
                 log.Println("Error inserting news item:", err)
-                continue
+                return
             }
             log.Println("Inserted new news item:", title)
             sendNewsUpdate(db)
         } else {
-            // Check if the title or description differs
-            var dbTitle, dbDescription string
-            err = db.QueryRow("SELECT title, description FROM iu9Trofimenko WHERE guid=?", guid).Scan(&dbTitle, &dbDescription)
+            // Check if the description has changed
+            var dbDescription string
+            err = db.QueryRow("SELECT description FROM iu9Trofimenko WHERE title=? AND date=?", title, date).Scan(&dbDescription)
             if err != nil {
                 log.Println("Error retrieving existing news item:", err)
-                continue
+                return
             }
-            if dbTitle != title || dbDescription != description {
-                // Insert the news item into the database
-                _, err = db.Exec("INSERT INTO iu9Trofimenko (guid, title, description, pubDate, link) VALUES (?, ?, ?, ?, ?)",
-                    guid, title, description, dateStr, link)
+            if dbDescription != description {
+                // Update the news item in the database
+                _, err = db.Exec("UPDATE iu9Trofimenko SET description=?, link=? WHERE title=? AND date=?",
+                    description, link, title, date)
                 if err != nil {
-                    log.Println("Error inserting updated news item:", err)
-                    continue
+                    log.Println("Error updating news item:", err)
+                    return
                 }
-                log.Println("Inserted updated news item:", title)
+                log.Println("Updated news item:", title)
                 sendNewsUpdate(db)
             }
         }
-
-        // Add item to feedItems to pass to the template
-        feedItems = append(feedItems, map[string]string{
-            "Title":       title,
-            "Description": description,
-            "Link":        link,
-            "PubDate":     dateStr,
-        })
-    }
+    })
 
     return feedItems, nil
 }
@@ -240,7 +265,7 @@ func serveWs(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 func sendNewsUpdate(db *sql.DB) {
     // Get the list of news items from the database
-    rows, err := db.Query("SELECT id, title, description, pubDate, link FROM iu9Trofimenko ORDER BY id DESC")
+    rows, err := db.Query("SELECT id, title, description, date, link FROM iu9Trofimenko ORDER BY id DESC")
     if err != nil {
         log.Println("Error querying news items:", err)
         return
@@ -251,8 +276,8 @@ func sendNewsUpdate(db *sql.DB) {
 
     for rows.Next() {
         var id int
-        var title, description, pubDate, link string
-        err = rows.Scan(&id, &title, &description, &pubDate, &link)
+        var title, description, date, link string
+        err = rows.Scan(&id, &title, &description, &date, &link)
         if err != nil {
             log.Println("Error scanning news item:", err)
             continue
@@ -261,7 +286,7 @@ func sendNewsUpdate(db *sql.DB) {
             "id":          fmt.Sprintf("%d", id),
             "title":       title,
             "description": description,
-            "pubDate":     pubDate,
+            "date":        date,
             "link":        link,
         }
         newsItems = append(newsItems, item)
@@ -280,7 +305,7 @@ func sendNewsUpdate(db *sql.DB) {
 
 func sendNewsUpdateToClient(db *sql.DB, ws *websocket.Conn) {
     // Get the list of news items from the database
-    rows, err := db.Query("SELECT id, title, description, pubDate, link FROM iu9Trofimenko ORDER BY id DESC")
+    rows, err := db.Query("SELECT id, title, description, date, link FROM iu9Trofimenko ORDER BY id DESC")
     if err != nil {
         log.Println("Error querying news items:", err)
         return
@@ -291,8 +316,8 @@ func sendNewsUpdateToClient(db *sql.DB, ws *websocket.Conn) {
 
     for rows.Next() {
         var id int
-        var title, description, pubDate, link string
-        err = rows.Scan(&id, &title, &description, &pubDate, &link)
+        var title, description, date, link string
+        err = rows.Scan(&id, &title, &description, &date, &link)
         if err != nil {
             log.Println("Error scanning news item:", err)
             continue
@@ -301,7 +326,7 @@ func sendNewsUpdateToClient(db *sql.DB, ws *websocket.Conn) {
             "id":          fmt.Sprintf("%d", id),
             "title":       title,
             "description": description,
-            "pubDate":     pubDate,
+            "date":        date,
             "link":        link,
         }
         newsItems = append(newsItems, item)
@@ -340,26 +365,54 @@ func handleMessages() {
 }
 
 func monitorDatabaseChanges(db *sql.DB) {
-    var prevCount int
+    var prevHash string
 
     for {
         // Sleep for some time
         time.Sleep(5 * time.Second)
 
-        // Get the count of news items
-        var count int
-        err := db.QueryRow("SELECT COUNT(*) FROM iu9Trofimenko").Scan(&count)
+        // Get the data from the database
+        rows, err := db.Query("SELECT id, title, description, date, link FROM iu9Trofimenko ORDER BY id DESC")
         if err != nil {
-            log.Println("Error counting news items:", err)
+            log.Println("Error querying news items:", err)
             continue
         }
 
-        // Compare with previous count
-        if count != prevCount {
-            // News items have changed
-            // Send update to clients
+        var data []byte
+        var newsItems []map[string]string
+
+        for rows.Next() {
+            var id int
+            var title, description, date, link string
+            err = rows.Scan(&id, &title, &description, &date, &link)
+            if err != nil {
+                log.Println("Error scanning news item:", err)
+                continue
+            }
+            item := map[string]string{
+                "id":          fmt.Sprintf("%d", id),
+                "title":       title,
+                "description": description,
+                "date":        date,
+                "link":        link,
+            }
+            newsItems = append(newsItems, item)
+        }
+        rows.Close()
+
+        data, err = json.Marshal(newsItems)
+        if err != nil {
+            log.Println("Error marshalling news items:", err)
+            continue
+        }
+
+        // Compute the hash of the data
+        hash := md5.Sum(data)
+        hashStr := hex.EncodeToString(hash[:])
+
+        if hashStr != prevHash {
             sendNewsUpdate(db)
-            prevCount = count
+            prevHash = hashStr
         }
     }
 }
