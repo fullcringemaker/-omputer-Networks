@@ -1,9 +1,11 @@
 package main
 
 import (
+    "compress/gzip"
     "database/sql"
     "encoding/xml"
     "fmt"
+    "io"
     "log"
     "net/http"
     "strings"
@@ -89,18 +91,37 @@ func main() {
 
 // Fetch RSS items from the RSS feed
 func fetchRSSItems() ([]Item, error) {
-    resp, err := http.Get(rssURL)
+    client := &http.Client{}
+    req, err := http.NewRequest("GET", rssURL, nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("Accept-Encoding", "gzip")
+
+    resp, err := client.Do(req)
     if err != nil {
         return nil, err
     }
     defer resp.Body.Close()
 
-    var rss RSS
+    var reader io.Reader
 
-    // Use a decoder with CharsetReader to handle windows-1251 encoding
-    decoder := xml.NewDecoder(resp.Body)
+    switch resp.Header.Get("Content-Encoding") {
+    case "gzip":
+        gzReader, err := gzip.NewReader(resp.Body)
+        if err != nil {
+            return nil, err
+        }
+        defer gzReader.Close()
+        reader = gzReader
+    default:
+        reader = resp.Body
+    }
+
+    decoder := xml.NewDecoder(reader)
     decoder.CharsetReader = charset.NewReaderLabel
 
+    var rss RSS
     err = decoder.Decode(&rss)
     if err != nil {
         return nil, err
