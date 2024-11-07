@@ -1,69 +1,26 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>RSS Dashboard</title>
+    <title>Дэшборд новостей</title>
 </head>
 <body>
-    <h1>RSS Новости</h1>
-    <table border="1" id="newsTable">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Заголовок</th>
-                <th>Описание</th>
-                <th>Дата</th>
-                <th>Ссылка</th>
-            </tr>
-        </thead>
-        <tbody>
-            <!-- Новости будут добавляться здесь динамически -->
-        </tbody>
-    </table>
+    <h1>Дэшборд новостей</h1>
+    <div id="news"></div>
 
     <script>
-        const ws = new WebSocket("ws://" + window.location.host + "/ws");
-
-        ws.onopen = function() {
-            console.log("WebSocket соединение установлено.");
-        };
+        var ws = new WebSocket("ws://" + location.host + "/ws");
 
         ws.onmessage = function(event) {
-            const newsList = JSON.parse(event.data);
-            updateTable(newsList);
-        };
-
-        ws.onclose = function() {
-            console.log("WebSocket соединение закрыто.");
-        };
-
-        function updateTable(newsList) {
-            const tbody = document.getElementById("newsTable").getElementsByTagName("tbody")[0];
-            tbody.innerHTML = ""; // Очистка таблицы
-
-            newsList.forEach(function(news) {
-                const row = tbody.insertRow();
-
-                const cellId = row.insertCell(0);
-                cellId.textContent = news.id;
-
-                const cellTitle = row.insertCell(1);
-                cellTitle.textContent = news.title;
-
-                const cellDescription = row.insertCell(2);
-                cellDescription.textContent = news.description;
-
-                const cellDate = row.insertCell(3);
-                cellDate.textContent = news.date;
-
-                const cellLink = row.insertCell(4);
-                const a = document.createElement("a");
-                a.href = news.link;
-                a.textContent = "Перейти";
-                a.target = "_blank";
-                cellLink.appendChild(a);
+            var data = JSON.parse(event.data);
+            var newsDiv = document.getElementById("news");
+            newsDiv.innerHTML = "";
+            data.forEach(function(item) {
+                var div = document.createElement("div");
+                div.innerHTML = "<h2>" + item.title + "</h2><p>" + item.description + "</p><p><em>" + item.date + "</em></p>";
+                newsDiv.appendChild(div);
             });
-        }
+        };
     </script>
 </body>
 </html>
