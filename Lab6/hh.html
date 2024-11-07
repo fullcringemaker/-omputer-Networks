@@ -2,26 +2,68 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Новости</title>
+    <title>RSS Dashboard</title>
 </head>
 <body>
-    <h1>Новости</h1>
-    <div id="news"></div>
+    <h1>RSS Новости</h1>
+    <table border="1" id="newsTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Заголовок</th>
+                <th>Описание</th>
+                <th>Дата</th>
+                <th>Ссылка</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Новости будут добавляться здесь динамически -->
+        </tbody>
+    </table>
 
     <script>
-        var ws = new WebSocket("ws://" + location.host + "/ws");
-        ws.onmessage = function(event) {
-            var items = JSON.parse(event.data);
-            var newsDiv = document.getElementById("news");
-            newsDiv.innerHTML = "";
-            items.forEach(function(item) {
-                var article = document.createElement("div");
-                article.innerHTML = "<h2>" + item.Title + "</h2>" +
-                                    "<p><em>" + item.PubDate + "</em></p>" +
-                                    "<p>" + item.Description + "</p>";
-                newsDiv.appendChild(article);
-            });
+        const ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+        ws.onopen = function() {
+            console.log("WebSocket соединение установлено.");
         };
+
+        ws.onmessage = function(event) {
+            const newsList = JSON.parse(event.data);
+            updateTable(newsList);
+        };
+
+        ws.onclose = function() {
+            console.log("WebSocket соединение закрыто.");
+        };
+
+        function updateTable(newsList) {
+            const tbody = document.getElementById("newsTable").getElementsByTagName("tbody")[0];
+            tbody.innerHTML = ""; // Очистка таблицы
+
+            newsList.forEach(function(news) {
+                const row = tbody.insertRow();
+
+                const cellId = row.insertCell(0);
+                cellId.textContent = news.id;
+
+                const cellTitle = row.insertCell(1);
+                cellTitle.textContent = news.title;
+
+                const cellDescription = row.insertCell(2);
+                cellDescription.textContent = news.description;
+
+                const cellDate = row.insertCell(3);
+                cellDate.textContent = news.date;
+
+                const cellLink = row.insertCell(4);
+                const a = document.createElement("a");
+                a.href = news.link;
+                a.textContent = "Перейти";
+                a.target = "_blank";
+                cellLink.appendChild(a);
+            });
+        }
     </script>
 </body>
 </html>
