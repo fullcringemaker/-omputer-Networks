@@ -1,37 +1,39 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>News Dashboard</title>
 </head>
 <body>
     <h1>News Dashboard</h1>
-    <div id="news"></div>
-
-    <script type="text/javascript">
-        var ws = new WebSocket("ws://" + window.location.host + "/ws");
-
+    <div id="news-container">
+        {{template "news" .NewsItems}}
+    </div>
+    <script>
+        // Connect via WebSocket
+        var ws = new WebSocket("ws://" + location.host + "/ws");
         ws.onmessage = function(event) {
-            var newsItems = JSON.parse(event.data);
-            var newsDiv = document.getElementById("news");
-            newsDiv.innerHTML = "";
+            var data = JSON.parse(event.data);
+            renderNews(data);
+        };
+
+        function renderNews(newsItems) {
+            var newsContainer = document.getElementById("news-container");
+            var html = '';
             for (var i = 0; i < newsItems.length; i++) {
                 var item = newsItems[i];
-                var div = document.createElement("div");
-                div.innerHTML = "<h2><a href='" + item.link + "' target='_blank'>" + item.title + "</a></h2>" +
-                                "<p>" + item.description + "</p>" +
-                                "<p>Date: " + item.date + "</p>" +
-                                "<hr>";
-                newsDiv.appendChild(div);
+                html += '<div class="news-item">';
+                html += '<h2><a href="' + item.Link + '" target="_blank">' + item.Title + '</a></h2>';
+                html += '<p>' + item.Description + '</p>';
+                var date = new Date(item.Date);
+                var day = ("0" + date.getDate()).slice(-2);
+                var month = ("0" + (date.getMonth() + 1)).slice(-2);
+                var year = date.getFullYear();
+                html += '<small>' + day + '.' + month + '.' + year + '</small>';
+                html += '<hr></div>';
             }
-        };
-
-        ws.onopen = function() {
-            console.log("WebSocket connection established");
-        };
-
-        ws.onclose = function() {
-            console.log("WebSocket connection closed");
-        };
+            newsContainer.innerHTML = html;
+        }
     </script>
 </body>
 </html>
