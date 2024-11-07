@@ -4,7 +4,7 @@ import (
     "database/sql"
     _ "github.com/go-sql-driver/mysql"
     "github.com/gorilla/websocket"
-    "github.com/mmcdole/gofeed"
+    "github.com/SlyMarbo/rss"
     "log"
     "net/http"
     "sync"
@@ -49,8 +49,8 @@ func main() {
     }
     defer db.Close()
 
-    // Create the table if it doesn't exist
-    err = createTable(db)
+    // Ensure the table has the required structure
+    err = ensureTable(db)
     if err != nil {
         log.Fatal(err)
     }
@@ -94,8 +94,25 @@ func main() {
     }
 }
 
+func ensureTable(db *sql.DB) error {
+    // Check if the table exists
+    var tableNameInDB string
+    err := db.QueryRow("SHOW TABLES LIKE ?", tableName).Scan(&tableNameInDB)
+    if err != nil {
+        if err == sql.ErrNoRows {
+            // Table does not exist, create it
+            return createTable(db)
+        } else {
+            return err
+        }
+    } else {
+        // Table exists, ensure it has the correct columns
+        return alterTable(db)
+    }
+}
+
 func createTable(db *sql.DB) error {
-    query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+    query := fmt.Sprintf(`CREATE TABLE %s (
         id INT AUTO_INCREMENT PRIMARY KEY,
         title VARCHAR(255),
         description TEXT,
@@ -107,9 +124,58 @@ func createTable(db *sql.DB) error {
     return err
 }
 
+func alterTable(db *sql.DB) error {
+    // Get existing columns
+    columns := make(map[string]bool)
+    rows, err := db.Query(fmt.Sprintf("SHOW COLUMNS FROM %s", tableName))
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+    for rows.Next() {
+        var field, dataType, null, key, defaultValue, extra string
+        err = rows.Scan(&field, &dataType, &null, &key, &defaultValue, &extra)
+        if err != nil {
+            return err
+        }
+        columns[field] = true
+    }
+
+    // Add missing columns
+    queries := []string{}
+    if !columns["link"] {
+        queries = append(queries, fmt.Sprintf("ALTER TABLE %s ADD COLUMN link VARCHAR(255)", tableName))
+    }
+    if !columns["date"] {
+        queries = append(queries, fmt.Sprintf("ALTER TABLE %s ADD COLUMN date VARCHAR(10)", tableName))
+    }
+    if !columns["description"] {
+        queries = append(queries, fmt.Sprintf("ALTER TABLE %s ADD COLUMN description TEXT", tableName))
+    }
+    if !columns["title"] {
+        queries = append(queries, fmt.Sprintf("ALTER TABLE %s ADD COLUMN title VARCHAR(255)", tableName))
+    }
+
+    for _, query := range queries {
+        _, err := db.Exec(query)
+        if err != nil {
+            return err
+        }
+    }
+
+    // Add unique key on link
+    if !columns["link"] {
+        _, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD UNIQUE KEY unique_link (link)", tableName))
+        if err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+
 func processRSSFeed(db *sql.DB) error {
-    fp := gofeed.NewParser()
-    feed, err := fp.ParseURL(rssFeedURL)
+    feed, err := rss.Fetch(rssFeedURL)
     if err != nil {
         return err
     }
@@ -124,13 +190,14 @@ func processRSSFeed(db *sql.DB) error {
     return nil
 }
 
-func upsertNewsItem(db *sql.DB, item *gofeed.Item) error {
+func upsertNewsItem(db *sql.DB, item *rss.Item) error {
     // Format the date as dd.mm.yyyy
-    date := ""
-    if item.PublishedParsed != nil {
-        date = item.PublishedParsed.Format("02.01.2006")
-    } else {
-        date = time.Now().Format("02.01.2006")
+    date := item.Date.Format("02.01.2006")
+
+    // Use Content or Summary as description
+    description := item.Content
+    if description == "" {
+        description = item.Summary
     }
 
     // Check if the item exists
@@ -141,7 +208,7 @@ func upsertNewsItem(db *sql.DB, item *gofeed.Item) error {
         if err == sql.ErrNoRows {
             // Insert new item
             query = fmt.Sprintf("INSERT INTO %s (title, description, link, date) VALUES (?, ?, ?, ?)", tableName)
-            _, err := db.Exec(query, item.Title, item.Description, item.Link, date)
+            _, err := db.Exec(query, item.Title, description, item.Link, date)
             return err
         } else {
             return err
@@ -149,7 +216,7 @@ func upsertNewsItem(db *sql.DB, item *gofeed.Item) error {
     } else {
         // Item exists, check if it needs to be updated
         query = fmt.Sprintf("UPDATE %s SET title = ?, description = ?, date = ? WHERE id = ?", tableName)
-        _, err := db.Exec(query, item.Title, item.Description, date, id)
+        _, err := db.Exec(query, item.Title, description, date, id)
         return err
     }
 }
