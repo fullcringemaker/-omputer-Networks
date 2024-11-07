@@ -7,21 +7,21 @@ import (
     "net/http"
     "time"
 
-    "github.com/gorilla/websocket"
-    _ "github.com/go-sql-driver/mysql"
     "github.com/mmcdole/gofeed"
+    _ "github.com/go-sql-driver/mysql"
+    "encoding/json"
 )
 
-var (
-    db          *sql.DB
-    clients     = make(map[*websocket.Conn]bool)
-    broadcast   = make(chan []NewsItem)
-    rssFeedURL  = "http://rospotrebnadzor.ru/region/rss/rss.php"
-    rssInterval = 5 * time.Minute
-    upgrader    = websocket.Upgrader{}
+const (
+    dbUser     = "iu9networkslabs"
+    dbPassword = "Je2dTYr6"
+    dbName     = "iu9networkslabs"
+    dbHost     = "students.yss.su"
+    tableName  = "iu9Trofimenko"
+    rssURL     = "https://rospotrebnadzor.ru/region/rss/rss.php?rss=y"
 )
 
-// NewsItem представляет структуру новости
+// Структура для хранения новости
 type NewsItem struct {
     ID          int
     Title       string
@@ -30,100 +30,143 @@ type NewsItem struct {
 }
 
 func main() {
-    var err error
-    // Подключение к базе данных
-    db, err = sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su)/iu9networkslabs")
+    // Подключаемся к базе данных
+    dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8", dbUser, dbPassword, dbHost, dbName)
+    db, err := sql.Open("mysql", dsn)
     if err != nil {
-        log.Fatal(err)
+        log.Fatalf("Ошибка подключения к базе данных: %v", err)
     }
     defer db.Close()
 
-    // Проверка подключения
-    err = db.Ping()
-    if err != nil {
-        log.Fatal(err)
+    // Проверяем подключение
+    if err = db.Ping(); err != nil {
+        log.Fatalf("База данных недоступна: %v", err)
     }
 
-    // Запуск горутины для периодического парсинга RSS
+    // Создаем таблицу, если она не существует
+    createTable(db)
+
+    // Запускаем парсинг RSS каждые 5 минут в отдельной горутине
     go func() {
         for {
-            parseAndUpdateRSS()
-            time.Sleep(rssInterval)
+            parseAndUpdate(db)
+            time.Sleep(5 * time.Minute)
         }
     }()
 
-    // Запуск горутины для рассылки обновлений
-    go handleMessages()
+    // Запускаем веб-сервер
+    http.HandleFunc("/", dashboardHandler)
+    http.HandleFunc("/news", newsHandler(db))
+    fmt.Println("Сервер запущен на порту 8080...")
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
 
-    // Маршруты HTTP
-    http.HandleFunc("/", serveHome)
-    http.HandleFunc("/ws", handleConnections)
+// Функция для создания таблицы
+func createTable(db *sql.DB) {
+    query := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS %s (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255),
+            description TEXT,
+            date VARCHAR(10)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+    `, tableName)
 
-    fmt.Println("Сервер запущен на порту :8080")
-    err = http.ListenAndServe(":8080", nil)
+    _, err := db.Exec(query)
     if err != nil {
-        log.Fatal("ListenAndServe: ", err)
+        log.Fatalf("Ошибка создания таблицы: %v", err)
     }
 }
 
-// Парсинг RSS и обновление базы данных
-func parseAndUpdateRSS() {
+// Функция для парсинга RSS и обновления базы данных
+func parseAndUpdate(db *sql.DB) {
+    fmt.Println("Начало парсинга RSS...")
+
+    // Парсим RSS-ленту
     fp := gofeed.NewParser()
-    feed, err := fp.ParseURL(rssFeedURL)
+    feed, err := fp.ParseURL(rssURL)
     if err != nil {
-        log.Println("Ошибка парсинга RSS:", err)
+        log.Printf("Ошибка парсинга RSS: %v", err)
         return
     }
 
     for _, item := range feed.Items {
-        // Проверка наличия новости в базе данных
-        var exists bool
-        var id int
-        err := db.QueryRow("SELECT id FROM iu9Trofimenko WHERE title = ?", item.Title).Scan(&id)
+        // Форматируем дату
+        pubDate := item.PublishedParsed.Format("02.01.2006")
+
+        // Проверяем, есть ли запись в базе данных
+        exists, err := checkIfExists(db, item.Title)
         if err != nil {
-            if err == sql.ErrNoRows {
-                exists = false
-            } else {
-                log.Println("Ошибка при проверке существования записи:", err)
-                continue
-            }
-        } else {
-            exists = true
+            log.Printf("Ошибка проверки существования записи: %v", err)
+            continue
         }
 
-        if !exists {
-            // Вставка новой новости
-            _, err := db.Exec("INSERT INTO iu9Trofimenko (title, description, date) VALUES (?, ?, ?)",
-                item.Title, item.Description, item.Published)
+        if exists {
+            // Обновляем запись, если необходимо
+            err = updateRecord(db, item.Title, item.Description, pubDate)
             if err != nil {
-                log.Println("Ошибка вставки записи:", err)
-                continue
+                log.Printf("Ошибка обновления записи: %v", err)
             }
         } else {
-            // Обновление новости, если она изменилась
-            _, err := db.Exec("UPDATE iu9Trofimenko SET description = ?, date = ? WHERE id = ? AND (description != ? OR date != ?)",
-                item.Description, item.Published, id, item.Description, item.Published)
+            // Вставляем новую запись
+            err = insertRecord(db, item.Title, item.Description, pubDate)
             if err != nil {
-                log.Println("Ошибка обновления записи:", err)
-                continue
+                log.Printf("Ошибка вставки записи: %v", err)
             }
         }
     }
 
-    // Получение обновленных данных для отправки на клиент
-    newsItems, err := getAllNews()
-    if err != nil {
-        log.Println("Ошибка получения новостей:", err)
-        return
-    }
-
-    // Отправка обновлений всем подключенным клиентам
-    broadcast <- newsItems
+    fmt.Println("Парсинг RSS завершен.")
 }
 
-// Получение всех новостей из базы данных
-func getAllNews() ([]NewsItem, error) {
-    rows, err := db.Query("SELECT id, title, description, date FROM iu9Trofimenko")
+// Функция для проверки существования записи
+func checkIfExists(db *sql.DB, title string) (bool, error) {
+    query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE title = ?", tableName)
+    var count int
+    err := db.QueryRow(query, title).Scan(&count)
+    if err != nil {
+        return false, err
+    }
+    return count > 0, nil
+}
+
+// Функция для обновления записи
+func updateRecord(db *sql.DB, title, description, date string) error {
+    query := fmt.Sprintf("UPDATE %s SET description = ?, date = ? WHERE title = ?", tableName)
+    _, err := db.Exec(query, description, date, title)
+    return err
+}
+
+// Функция для вставки новой записи
+func insertRecord(db *sql.DB, title, description, date string) error {
+    query := fmt.Sprintf("INSERT INTO %s (title, description, date) VALUES (?, ?, ?)", tableName)
+    _, err := db.Exec(query, title, description, date)
+    return err
+}
+
+// Обработчик для отображения дэшборда
+func dashboardHandler(w http.ResponseWriter, r *http.Request) {
+    http.ServeFile(w, r, "dashboard.html")
+}
+
+// Обработчик для предоставления новостей в формате JSON
+func newsHandler(db *sql.DB) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        newsItems, err := fetchNews(db)
+        if err != nil {
+            http.Error(w, "Ошибка получения новостей", http.StatusInternalServerError)
+            return
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(newsItems)
+    }
+}
+
+// Функция для получения новостей из базы данных
+func fetchNews(db *sql.DB) ([]NewsItem, error) {
+    query := fmt.Sprintf("SELECT id, title, description, date FROM %s ORDER BY id DESC", tableName)
+    rows, err := db.Query(query)
     if err != nil {
         return nil, err
     }
@@ -138,61 +181,6 @@ func getAllNews() ([]NewsItem, error) {
         }
         newsItems = append(newsItems, item)
     }
+
     return newsItems, nil
 }
-
-// Обработка подключений WebSocket
-func handleConnections(w http.ResponseWriter, r *http.Request) {
-    upgrader.CheckOrigin = func(r *http.Request) bool { return true }
-    ws, err := upgrader.Upgrade(w, r, nil)
-    if err != nil {
-        log.Println(err)
-        return
-    }
-    defer ws.Close()
-
-    // Регистрация нового клиента
-    clients[ws] = true
-
-    // Отправка текущих новостей новому клиенту
-    newsItems, err := getAllNews()
-    if err != nil {
-        log.Println("Ошибка получения новостей для нового клиента:", err)
-        return
-    }
-    err = ws.WriteJSON(newsItems)
-    if err != nil {
-        log.Println("Ошибка отправки новостей новому клиенту:", err)
-        return
-    }
-
-    // Ожидание закрытия соединения
-    for {
-        _, _, err := ws.ReadMessage()
-        if err != nil {
-            delete(clients, ws)
-            break
-        }
-    }
-}
-
-// Рассылка обновлений всем подключенным клиентам
-func handleMessages() {
-    for {
-        newsItems := <-broadcast
-        for client := range clients {
-            err := client.WriteJSON(newsItems)
-            if err != nil {
-                log.Printf("Клиент отключен: %v", err)
-                client.Close()
-                delete(clients, client)
-            }
-        }
-    }
-}
-
-// Обслуживание главной страницы
-func serveHome(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "index.html")
-}
-
