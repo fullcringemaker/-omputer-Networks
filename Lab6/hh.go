@@ -1,11 +1,9 @@
 package main
 
 import (
-    "bytes"
     "database/sql"
     "encoding/xml"
     "fmt"
-    "io"
     "log"
     "net/http"
     "strings"
@@ -100,13 +98,7 @@ func fetchRSSItems() ([]Item, error) {
     var rss RSS
 
     // Use a decoder with CharsetReader to handle windows-1251 encoding
-    data, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return nil, err
-    }
-
-    reader := bytes.NewReader(data)
-    decoder := xml.NewDecoder(reader)
+    decoder := xml.NewDecoder(resp.Body)
     decoder.CharsetReader = charset.NewReaderLabel
 
     err = decoder.Decode(&rss)
