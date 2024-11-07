@@ -97,9 +97,10 @@ func main() {
 func ensureTable(db *sql.DB) error {
     // Check if the table exists
     var tableNameInDB string
-    err := db.QueryRow("SHOW TABLES LIKE ?", tableName).Scan(&tableNameInDB)
+    query := fmt.Sprintf("SHOW TABLES LIKE '%s'", tableName)
+    err := db.QueryRow(query).Scan(&tableNameInDB)
     if err != nil {
-        if err == sql.ErrNoRows {
+        if err == sql.ErrNoRows || tableNameInDB == "" {
             // Table does not exist, create it
             return createTable(db)
         } else {
