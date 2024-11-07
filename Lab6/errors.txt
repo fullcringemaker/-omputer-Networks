@@ -1,3 +1,4 @@
 PS D:\network_testing> go run main.go
-Server started on port 9742
-2024/11/08 00:46:36 Error fetching RSS items: XML syntax error on line 355: unexpected EOF
+2024/11/08 01:26:30 Ошибка обновления новостей из RSS: Failed to detect feed type
+2024/11/08 01:26:30 Error 1054 (42S22): Unknown column 'link' in 'field list'
+exit status 1
