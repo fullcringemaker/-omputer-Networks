@@ -1,29 +1,26 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>News Dashboard</title>
+    <title>Новости</title>
 </head>
 <body>
-    <h1>News Dashboard</h1>
+    <h1>Новости</h1>
     <div id="news"></div>
 
     <script>
-        var ws = new WebSocket("ws://" + location.host + "/ws");
-
+        var ws = new WebSocket("ws://localhost:9742/ws");
         ws.onmessage = function(event) {
-            var newsItems = JSON.parse(event.data);
+            var items = JSON.parse(event.data);
             var newsDiv = document.getElementById("news");
             newsDiv.innerHTML = "";
-            for (var i = 0; i < newsItems.length; i++) {
-                var item = newsItems[i];
-                var itemDiv = document.createElement("div");
-                itemDiv.innerHTML = "<h2>" + item.title + "</h2>" +
-                    "<p>" + item.description + "</p>" +
-                    "<p><a href='" + item.link + "'>" + item.link + "</a></p>" +
-                    "<p>Date: " + item.date + "</p><hr>";
-                newsDiv.appendChild(itemDiv);
-            }
+            items.forEach(function(item) {
+                var article = document.createElement("div");
+                article.innerHTML = "<h2>" + item.Title + "</h2>" +
+                                    "<p><em>" + item.PubDate + "</em></p>" +
+                                    "<p>" + item.Description + "</p>";
+                newsDiv.appendChild(article);
+            });
         };
     </script>
 </body>
