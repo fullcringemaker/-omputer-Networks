@@ -1,43 +1,30 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>Новости</title>
+    <title>News Dashboard</title>
 </head>
 <body>
-    <h1>Новости</h1>
-    <div id="news-container">
-        Загрузка новостей...
-    </div>
+    <h1>News Dashboard</h1>
+    <div id="news"></div>
 
     <script>
-        async function fetchNews() {
-            try {
-                const response = await fetch('/news');
-                const newsItems = await response.json();
-                const container = document.getElementById('news-container');
-                container.innerHTML = '';
+        var ws = new WebSocket("ws://" + location.host + "/ws");
 
-                newsItems.forEach(item => {
-                    const newsDiv = document.createElement('div');
-                    newsDiv.innerHTML = `
-                        <h2>${item.Title}</h2>
-                        <p>${item.Description}</p>
-                        <small>${item.Date}</small>
-                        <hr>
-                    `;
-                    container.appendChild(newsDiv);
-                });
-            } catch (error) {
-                console.error('Ошибка при загрузке новостей:', error);
+        ws.onmessage = function(event) {
+            var newsItems = JSON.parse(event.data);
+            var newsDiv = document.getElementById("news");
+            newsDiv.innerHTML = "";
+            for (var i = 0; i < newsItems.length; i++) {
+                var item = newsItems[i];
+                var itemDiv = document.createElement("div");
+                itemDiv.innerHTML = "<h2>" + item.title + "</h2>" +
+                    "<p>" + item.description + "</p>" +
+                    "<p><a href='" + item.link + "'>" + item.link + "</a></p>" +
+                    "<p>Date: " + item.date + "</p><hr>";
+                newsDiv.appendChild(itemDiv);
             }
-        }
-
-        // Первоначальная загрузка новостей
-        fetchNews();
-
-        // Обновление новостей каждые 60 секунд
-        setInterval(fetchNews, 60000);
+        };
     </script>
 </body>
 </html>
