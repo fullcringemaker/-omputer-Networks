@@ -1,7 +1,10 @@
 сразу после запуска мне выводится ошибка 
 
-PS D:\networks\Lab6> go run base.go
-Сервер запущен на порту :8080
-2024/11/05 13:17:12 Ошибка парсинга RSS: Failed to detect feed type
+2024/11/08 00:18:54 Server started at :9742
+2024/11/08 00:18:54 Error getting news items: Error 1054 (42S22): Unknown column 'link' in 'field list'
+2024/11/08 00:18:54 Error processing RSS feed: Failed to detect feed type
+2024/11/08 00:18:59 Error getting news items: Error 1054 (42S22): Unknown column 'link' in 'field list'
+2024/11/08 00:19:04 Error getting news items: Error 1054 (42S22): Unknown column 'link' in 'field list'
 
-исправь ее и предоставь решение возникшей проблемы
+
+исправь ее и предоставь исправленный код
