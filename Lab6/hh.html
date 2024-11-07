@@ -3,57 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <title>Новости</title>
-    <style>
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-        }
-        th {
-            background-color: #f2f2f2;
-        }
-    </style>
 </head>
 <body>
     <h1>Новости</h1>
-    <table id="newsTable">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Заголовок</th>
-                <th>Описание</th>
-                <th>Дата</th>
-            </tr>
-        </thead>
-        <tbody>
-        </tbody>
-    </table>
+    <div id="news-container">
+        Загрузка новостей...
+    </div>
 
     <script>
-        var ws = new WebSocket("ws://" + window.location.host + "/ws");
+        async function fetchNews() {
+            try {
+                const response = await fetch('/news');
+                const newsItems = await response.json();
+                const container = document.getElementById('news-container');
+                container.innerHTML = '';
 
-        ws.onmessage = function(event) {
-            var newsItems = JSON.parse(event.data);
-            var tbody = document.getElementById('newsTable').getElementsByTagName('tbody')[0];
-            tbody.innerHTML = '';
+                newsItems.forEach(item => {
+                    const newsDiv = document.createElement('div');
+                    newsDiv.innerHTML = `
+                        <h2>${item.Title}</h2>
+                        <p>${item.Description}</p>
+                        <small>${item.Date}</small>
+                        <hr>
+                    `;
+                    container.appendChild(newsDiv);
+                });
+            } catch (error) {
+                console.error('Ошибка при загрузке новостей:', error);
+            }
+        }
 
-            newsItems.forEach(function(item) {
-                var row = tbody.insertRow();
-                var cellID = row.insertCell(0);
-                var cellTitle = row.insertCell(1);
-                var cellDescription = row.insertCell(2);
-                var cellDate = row.insertCell(3);
+        // Первоначальная загрузка новостей
+        fetchNews();
 
-                cellID.textContent = item.ID;
-                cellTitle.textContent = item.Title;
-                cellDescription.innerHTML = item.Description;
-                cellDate.textContent = item.Date;
-            });
-        };
+        // Обновление новостей каждые 60 секунд
+        setInterval(fetchNews, 60000);
     </script>
 </body>
 </html>
-
