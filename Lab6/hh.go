@@ -2,6 +2,7 @@ package main
 
 import (
     "database/sql"
+    "encoding/json"
     "fmt"
     "html/template"
     "log"
@@ -41,6 +42,12 @@ func main() {
         link TEXT
     )
     `)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Ensure the table has all required columns
+    err = ensureTableSchema(db)
     if err != nil {
         log.Fatal(err)
     }
@@ -90,6 +97,38 @@ func main() {
     if err != nil {
         log.Fatal("ListenAndServe: ", err)
     }
+}
+
+// ensureTableSchema ensures that the 'iu9Trofimenko' table has all required columns
+func ensureTableSchema(db *sql.DB) error {
+    requiredColumns := []struct {
+        Name string
+        Type string
+    }{
+        {"id", "INT AUTO_INCREMENT PRIMARY KEY"},
+        {"guid", "VARCHAR(255) UNIQUE"},
+        {"title", "TEXT"},
+        {"description", "TEXT"},
+        {"pubDate", "VARCHAR(10)"},
+        {"link", "TEXT"},
+    }
+
+    for _, col := range requiredColumns {
+        var count int
+        err := db.QueryRow("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'iu9Trofimenko' AND COLUMN_NAME = ?", col.Name).Scan(&count)
+        if err != nil {
+            return err
+        }
+        if count == 0 {
+            // Add missing column
+            _, err := db.Exec(fmt.Sprintf("ALTER TABLE iu9Trofimenko ADD COLUMN %s %s", col.Name, col.Type))
+            if err != nil {
+                return err
+            }
+            log.Printf("Added '%s' column to 'iu9Trofimenko' table", col.Name)
+        }
+    }
+    return nil
 }
 
 func parseRSS(db *sql.DB) ([]map[string]string, error) {
