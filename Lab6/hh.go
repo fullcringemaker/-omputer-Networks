@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bytes"
     "database/sql"
     "encoding/xml"
     "fmt"
@@ -12,10 +13,11 @@ import (
 
     _ "github.com/go-sql-driver/mysql"
     "github.com/gorilla/websocket"
+    "golang.org/x/net/html/charset"
 )
 
 const (
-    rssURL       = "https://rospotrebnadzor.ru/region/rss/rss.php?rss=y"
+    rssURL        = "https://rospotrebnadzor.ru/region/rss/rss.php?rss=y"
     websocketPort = ":9742"
 )
 
@@ -43,7 +45,11 @@ const (
 )
 
 // WebSocket upgrader
-var upgrader = websocket.Upgrader{}
+var upgrader = websocket.Upgrader{
+    CheckOrigin: func(r *http.Request) bool {
+        return true
+    },
+}
 
 // Global WebSocket connections
 var clients = make(map[*websocket.Conn]bool)
@@ -92,12 +98,18 @@ func fetchRSSItems() ([]Item, error) {
     defer resp.Body.Close()
 
     var rss RSS
+
+    // Use a decoder with CharsetReader to handle windows-1251 encoding
     data, err := io.ReadAll(resp.Body)
     if err != nil {
         return nil, err
     }
 
-    err = xml.Unmarshal(data, &rss)
+    reader := bytes.NewReader(data)
+    decoder := xml.NewDecoder(reader)
+    decoder.CharsetReader = charset.NewReaderLabel
+
+    err = decoder.Decode(&rss)
     if err != nil {
         return nil, err
     }
@@ -141,8 +153,7 @@ func updateDatabase(items []Item) error {
         existingTitles[title] = true
     }
 
-    // Insert new items
-    insertQuery := `INSERT INTO iu9Trofimenko (title, description, date) VALUES (?, ?, ?)`
+    // Insert or update items
     for _, item := range items {
         if existingTitles[item.Title] {
             // Check if the content has changed
@@ -160,6 +171,8 @@ func updateDatabase(items []Item) error {
             }
             continue
         }
+        // Insert new item
+        insertQuery := `INSERT INTO iu9Trofimenko (title, description, date) VALUES (?, ?, ?)`
         _, err = db.Exec(insertQuery, item.Title, item.Description, formatDate(item.PubDate))
         if err != nil {
             return err
@@ -171,11 +184,26 @@ func updateDatabase(items []Item) error {
 
 // Format date to dd.mm.yyyy
 func formatDate(dateStr string) string {
-    t, err := time.Parse(time.RFC1123Z, dateStr)
-    if err != nil {
-        return dateStr
+    // Try different date formats
+    layouts := []string{
+        time.RFC1123Z,
+        time.RFC1123,
+        "Mon, 02 Jan 2006 15:04:05 -0700",
+        "Mon, 02 Jan 2006 15:04:05 MST",
+        "02 Jan 2006 15:04:05 -0700",
+        "02 Jan 2006",
     }
-    return t.Format("02.01.2006")
+
+    var t time.Time
+    var err error
+    for _, layout := range layouts {
+        t, err = time.Parse(layout, dateStr)
+        if err == nil {
+            return t.Format("02.01.2006")
+        }
+    }
+    // If parsing fails, return the original string
+    return dateStr
 }
 
 // Handle WebSocket connections
