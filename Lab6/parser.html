@@ -1,17 +1,10 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Parsed News</title>
-</head>
-<body>
-    <h1>Parsed News</h1>
+{{define "news"}}
     {{range .}}
         <div class="news-item">
             <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
             <p>{{.Description}}</p>
-            <small>{{.Date}}</small>
+            <small>{{.Date.Format "02.01.2006"}}</small>
             <hr>
         </div>
     {{end}}
-</body>
-</html>
+{{end}}
