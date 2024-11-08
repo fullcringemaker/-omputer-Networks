@@ -2,148 +2,255 @@ package main
 
 import (
     "database/sql"
-    "encoding/json"
-    "fmt"
     "html/template"
     "log"
     "net/http"
+    "strings"
     "sync"
     "time"
 
+    "github.com/gorilla/mux"
     "github.com/gorilla/websocket"
-    _ "github.com/go-sql-driver/mysql"
     "github.com/mmcdole/gofeed"
     "github.com/rainycape/unidecode"
+    _ "github.com/go-sql-driver/mysql"
 )
 
 // NewsItem представляет структуру новости
 type NewsItem struct {
-    ID          int       `json:"id"`
-    Title       string    `json:"title"`
-    Link        string    `json:"link"`
-    Description string    `json:"description"`
-    PubDate     time.Time `json:"pub_date"`
+    Title       string
+    Link        string
+    Description string
+    PubDate     string
 }
 
-// App содержит все необходимые компоненты приложения
-type App struct {
+var (
     db          *sql.DB
-    templates   *template.Template
-    clients     map[*websocket.Conn]bool
-    broadcast   chan NewsItem
-    mutex       sync.Mutex
-    deletedNews map[string]DeletedNews
-}
+    tmplDash    *template.Template
+    tmplParser  *template.Template
+    clients     = make(map[*websocket.Conn]bool)
+    broadcast   = make(chan string)
+    mu          sync.Mutex
+)
 
-// DeletedNews хранит информацию об удаленных новостях
-type DeletedNews struct {
-    Item      NewsItem
-    DeletedAt time.Time
-}
+const (
+    rssURL       = "https://ldpr.ru/rss"
+    dbUser       = "iu9networkslabs"
+    dbPassword   = "Je2dTYr6"
+    dbName       = "iu9networkslabs"
+    dbHost       = "students.yss.su"
+    tableName    = "iu9Trofimenko"
+    port         = ":9742"
+    reconnectSec = 60 // 1 минута в секундах
+)
 
-// NewApp инициализирует новое приложение
-func NewApp() *App {
-    tmpl := template.Must(template.ParseFiles("dashboard.html", "parser.html"))
-    db, err := sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs?charset=latin1&parseTime=true")
+func main() {
+    var err error
+    // Подключение к базе данных
+    dsn := dbUser + ":" + dbPassword + "@tcp(" + dbHost + ")/" + dbName + "?parseTime=true"
+    db, err = sql.Open("mysql", dsn)
     if err != nil {
         log.Fatalf("Ошибка подключения к базе данных: %v", err)
     }
+    defer db.Close()
 
-    // Убедитесь, что таблица существует
-    createTable := `
-    CREATE TABLE IF NOT EXISTS iu9Trofimenko (
-        id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(1024) COLLATE 'latin1_swedish_ci' NULL,
-        link VARCHAR(2083) COLLATE 'latin1_swedish_ci' NOT NULL UNIQUE,
-        description TEXT COLLATE 'latin1_swedish_ci' NULL,
-        pub_date DATETIME NULL
-    ) ENGINE='InnoDB' COLLATE 'latin1_swedish_ci';
-    `
-    _, err = db.Exec(createTable)
-    if err != nil {
-        log.Fatalf("Ошибка создания таблицы: %v", err)
+    if err = db.Ping(); err != nil {
+        log.Fatalf("Не удалось подключиться к базе данных: %v", err)
     }
 
-    return &App{
-        db:          db,
-        templates:   tmpl,
-        clients:     make(map[*websocket.Conn]bool),
-        broadcast:   make(chan NewsItem),
-        deletedNews: make(map[string]DeletedNews),
+    log.Println("Успешно подключено к базе данных.")
+
+    // Загрузка шаблонов
+    tmplDash, err = template.ParseFiles("dashboard.html")
+    if err != nil {
+        log.Fatalf("Ошибка загрузки шаблона dashboard.html: %v", err)
+    }
+
+    tmplParser, err = template.ParseFiles("parser.html")
+    if err != nil {
+        log.Fatalf("Ошибка загрузки шаблона parser.html: %v", err)
+    }
+
+    // Настройка роутера
+    router := mux.NewRouter()
+    router.HandleFunc("/", dashboardHandler)
+    router.HandleFunc("/ws", handleConnections)
+
+    // Запуск вебсокет обработчика
+    go handleMessages()
+
+    // Запуск парсинга RSS и обновления БД
+    go startParser()
+
+    // Запуск HTTP сервера
+    log.Printf("Сервер запущен на http://localhost%s", port)
+    if err := http.ListenAndServe(port, router); err != nil {
+        log.Fatalf("Ошибка запуска сервера: %v", err)
     }
 }
 
+// dashboardHandler обрабатывает запросы к главной странице
+func dashboardHandler(w http.ResponseWriter, r *http.Request) {
+    news, err := fetchNewsFromDB()
+    if err != nil {
+        http.Error(w, "Ошибка получения новостей из базы данных.", http.StatusInternalServerError)
+        return
+    }
+    err = tmplDash.Execute(w, news)
+    if err != nil {
+        log.Printf("Ошибка рендеринга шаблона dashboard: %v", err)
+    }
+}
+
+// upgrader используется для обновления HTTP-соединения до WebSocket
 var upgrader = websocket.Upgrader{
     CheckOrigin: func(r *http.Request) bool {
         return true
     },
 }
 
-// ServeHTTP настраивает маршруты и запускает сервер
-func (app *App) ServeHTTP() {
-    http.HandleFunc("/dashboard", app.handleDashboard)
-    http.HandleFunc("/ws", app.handleWebSocket)
-    http.HandleFunc("/", app.handleParser)
-
-    log.Println("Сервер запущен на порту 9742")
-    log.Fatal(http.ListenAndServe(":9742", nil))
-}
-
-// handleParser отображает шаблон parser.html с текущими новостями
-func (app *App) handleParser(w http.ResponseWriter, r *http.Request) {
-    news, err := app.fetchAllNews()
+// handleConnections обрабатывает WebSocket соединения
+func handleConnections(w http.ResponseWriter, r *http.Request) {
+    ws, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
-        http.Error(w, "Ошибка получения новостей", http.StatusInternalServerError)
+        log.Printf("Ошибка подключения вебсокета: %v", err)
         return
     }
-    app.templates.ExecuteTemplate(w, "parser.html", news)
-}
+    defer ws.Close()
 
-// handleDashboard отображает шаблон dashboard.html
-func (app *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
-    app.templates.ExecuteTemplate(w, "dashboard.html", nil)
-}
-
-// handleWebSocket устанавливает соединение WebSocket и отправляет текущие новости
-func (app *App) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-    conn, err := upgrader.Upgrade(w, r, nil)
-    if err != nil {
-        log.Printf("Ошибка обновления WebSocket: %v", err)
-        return
-    }
-    defer conn.Close()
-
-    app.mutex.Lock()
-    app.clients[conn] = true
-    app.mutex.Unlock()
-
-    // Отправка текущих новостей при подключении
-    news, err := app.fetchAllNews()
-    if err != nil {
-        log.Printf("Ошибка получения новостей: %v", err)
-        return
-    }
-    for _, item := range news {
-        conn.WriteJSON(item)
-    }
+    mu.Lock()
+    clients[ws] = true
+    mu.Unlock()
 
     for {
-        // Ожидание сообщений от клиента (не используются, но необходимо для поддержания соединения)
-        _, _, err := conn.ReadMessage()
+        // Читаем сообщения от клиента (не используем, но нужно для поддержания соединения)
+        _, _, err := ws.ReadMessage()
         if err != nil {
             log.Printf("Ошибка чтения сообщения: %v", err)
+            mu.Lock()
+            delete(clients, ws)
+            mu.Unlock()
             break
         }
     }
-
-    app.mutex.Lock()
-    delete(app.clients, conn)
-    app.mutex.Unlock()
 }
 
-// fetchAllNews получает все новости из базы данных
-func (app *App) fetchAllNews() ([]NewsItem, error) {
-    rows, err := app.db.Query("SELECT id, title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC")
+// handleMessages отправляет обновления всем подключенным клиентам
+func handleMessages() {
+    for {
+        msg := <-broadcast
+        mu.Lock()
+        for client := range clients {
+            err := client.WriteMessage(websocket.TextMessage, []byte(msg))
+            if err != nil {
+                log.Printf("Ошибка отправки сообщения клиенту: %v", err)
+                client.Close()
+                delete(clients, client)
+            }
+        }
+        mu.Unlock()
+    }
+}
+
+// startParser запускает цикл парсинга RSS и обновления БД каждые 5 минут
+func startParser() {
+    for {
+        err := parseAndUpdate()
+        if err != nil {
+            log.Printf("Ошибка при парсинге или обновлении данных: %v", err)
+        }
+
+        time.Sleep(5 * time.Minute) // Парсить каждые 5 минут
+    }
+}
+
+// parseAndUpdate выполняет парсинг RSS, обновляет базу данных и уведомляет клиентов
+func parseAndUpdate() error {
+    fp := gofeed.NewParser()
+    feed, err := fp.ParseURL(rssURL)
+    if err != nil {
+        return err
+    }
+
+    tx, err := db.Begin()
+    if err != nil {
+        return err
+    }
+
+    stmt, err := tx.Prepare(`INSERT INTO ` + tableName + ` (title, link, description, pub_date)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            link = VALUES(link),
+            description = VALUES(description),
+            pub_date = VALUES(pub_date)`)
+    if err != nil {
+        tx.Rollback()
+        return err
+    }
+    defer stmt.Close()
+
+    for _, item := range feed.Items {
+        title := unidecode.Unidecode(item.Title)
+        link := item.Link
+        description := unidecode.Unidecode(item.Description)
+        pubDate := item.PublishedParsed
+        if pubDate == nil {
+            pubDate = item.UpdatedParsed
+        }
+        pubDateStr := "Неизвестно"
+        if pubDate != nil {
+            pubDateStr = pubDate.Format("02.01.2006 15:04")
+        }
+
+        _, err := stmt.Exec(title, link, description, pubDateStr)
+        if err != nil {
+            log.Printf("Ошибка вставки записи: %v", err)
+            continue
+        }
+    }
+
+    err = tx.Commit()
+    if err != nil {
+        return err
+    }
+
+    // После обновления БД отправляем обновленные данные всем клиентам
+    news, err := fetchNewsFromDB()
+    if err != nil {
+        return err
+    }
+
+    rendered, err := renderTemplate("parser", news)
+    if err != nil {
+        return err
+    }
+
+    broadcast <- rendered
+
+    // Проверка, если все записи удалены, установить таймер на повторное добавление
+    count, err := countNews()
+    if err != nil {
+        return err
+    }
+
+    if count == 0 {
+        go func() {
+            log.Println("Все записи удалены. Ожидание 1 минуты перед повторным добавлением...")
+            time.Sleep(reconnectSec * time.Second)
+            err := parseAndUpdate()
+            if err != nil {
+                log.Printf("Ошибка при повторном добавлении записей: %v", err)
+            }
+        }()
+    }
+
+    return nil
+}
+
+// fetchNewsFromDB извлекает все новости из базы данных
+func fetchNewsFromDB() ([]NewsItem, error) {
+    rows, err := db.Query(`SELECT title, link, description, pub_date FROM ` + tableName + ` ORDER BY pub_date DESC`)
     if err != nil {
         return nil, err
     }
@@ -152,226 +259,38 @@ func (app *App) fetchAllNews() ([]NewsItem, error) {
     var news []NewsItem
     for rows.Next() {
         var item NewsItem
-        var pubDate time.Time
-        err := rows.Scan(&item.ID, &item.Title, &item.Link, &item.Description, &pubDate)
+        err := rows.Scan(&item.Title, &item.Link, &item.Description, &item.PubDate)
         if err != nil {
             return nil, err
         }
-        item.PubDate = pubDate
         news = append(news, item)
     }
     return news, nil
 }
 
-// broadcastNews отправляет новости всем подключенным клиентам
-func (app *App) broadcastNews() {
-    for {
-        newsItem := <-app.broadcast
-        app.mutex.Lock()
-        for client := range app.clients {
-            err := client.WriteJSON(newsItem)
-            if err != nil {
-                log.Printf("Ошибка отправки новости: %v", err)
-                client.Close()
-                delete(app.clients, client)
-            }
-        }
-        app.mutex.Unlock()
-    }
-}
-
-// parseAndUpdateRSS парсит RSS и обновляет базу данных
-func (app *App) parseAndUpdateRSS() {
-    fp := gofeed.NewParser()
-    feed, err := fp.ParseURL("https://ldpr.ru/rss")
+// renderTemplate рендерит шаблон parser.html для всех новостей и возвращает HTML строку
+func renderTemplate(tmplName string, news []NewsItem) (string, error) {
+    var rendered strings.Builder
+    tmpl, err := template.ParseFiles("parser.html")
     if err != nil {
-        log.Printf("Ошибка парсинга RSS: %v", err)
-        return
+        return "", err
     }
 
-    for _, item := range feed.Items {
-        title := unidecode.Unidecode(item.Title)
-        link := unidecode.Unidecode(item.Link)
-        description := unidecode.Unidecode(item.Description)
-        pubDate := item.PublishedParsed
-        if pubDate == nil {
-            pubDate = item.UpdatedParsed
-        }
-        if pubDate == nil {
-            pubDate = &time.Time{}
-        }
-
-        // Вставка или обновление новости
-        query := `
-        INSERT INTO iu9Trofimenko (title, link, description, pub_date)
-        VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-            title = VALUES(title),
-            link = VALUES(link),
-            description = VALUES(description),
-            pub_date = VALUES(pub_date)
-        `
-        _, err := app.db.Exec(query, title, link, description, pubDate)
+    for _, item := range news {
+        var sb strings.Builder
+        err := tmpl.ExecuteTemplate(&sb, "parser", item)
         if err != nil {
-            log.Printf("Ошибка вставки новости: %v", err)
+            log.Printf("Ошибка рендеринга шаблона: %v", err)
             continue
         }
-
-        // Получение ID вставленной или обновленной записи
-        var id int
-        err = app.db.QueryRow("SELECT id FROM iu9Trofimenko WHERE link = ?", link).Scan(&id)
-        if err != nil {
-            log.Printf("Ошибка получения ID новости: %v", err)
-            continue
-        }
-
-        // Отправка новости через канал для broadcast
-        newsItem := NewsItem{
-            ID:          id,
-            Title:       title,
-            Link:        link,
-            Description: description,
-            PubDate:     *pubDate,
-        }
-        app.broadcast <- newsItem
+        rendered.WriteString(sb.String())
     }
+    return rendered.String(), nil
 }
 
-// monitorDeletions следит за удалениями и восстанавливает их через 1 минуту
-func (app *App) monitorDeletions() {
-    ticker := time.NewTicker(10 * time.Second)
-    defer ticker.Stop()
-
-    for range ticker.C {
-        // Получение всех ссылок из базы данных
-        rows, err := app.db.Query("SELECT link, title, description, pub_date FROM iu9Trofimenko")
-        if err != nil {
-            log.Printf("Ошибка получения ссылок: %v", err)
-            continue
-        }
-
-        existingLinks := make(map[string]bool)
-        for rows.Next() {
-            var link string
-            var title string
-            var description string
-            var pubDate time.Time
-            err := rows.Scan(&link, &title, &description, &pubDate)
-            if err != nil {
-                log.Printf("Ошибка сканирования строки: %v", err)
-                continue
-            }
-            existingLinks[link] = true
-        }
-        rows.Close()
-
-        app.mutex.Lock()
-        for link, deletedNews := range app.deletedNews {
-            if !existingLinks[link] {
-                if time.Since(deletedNews.DeletedAt) >= time.Minute {
-                    // Восстановление новости
-                    query := `
-                    INSERT INTO iu9Trofimenko (title, link, description, pub_date)
-                    VALUES (?, ?, ?, ?)
-                    `
-                    _, err := app.db.Exec(query, deletedNews.Item.Title, deletedNews.Item.Link, deletedNews.Item.Description, deletedNews.Item.PubDate)
-                    if err != nil {
-                        log.Printf("Ошибка восстановления новости: %v", err)
-                        continue
-                    }
-                    // Отправка восстановленной новости через канал для broadcast
-                    app.broadcast <- deletedNews.Item
-                    delete(app.deletedNews, link)
-                }
-            } else {
-                delete(app.deletedNews, link)
-            }
-        }
-        app.mutex.Unlock()
-    }
-}
-
-// watchDeletions следит за удалениями в таблице и добавляет их в deletedNews
-func (app *App) watchDeletions() {
-    ticker := time.NewTicker(5 * time.Second)
-    defer ticker.Stop()
-
-    for range ticker.C {
-        // Получение всех ссылок из RSS
-        fp := gofeed.NewParser()
-        feed, err := fp.ParseURL("https://ldpr.ru/rss")
-        if err != nil {
-            log.Printf("Ошибка парсинга RSS для watchDeletions: %v", err)
-            continue
-        }
-
-        rssLinks := make(map[string]bool)
-        for _, item := range feed.Items {
-            link := unidecode.Unidecode(item.Link)
-            rssLinks[link] = true
-        }
-
-        // Получение всех ссылок из базы данных
-        rows, err := app.db.Query("SELECT link, title, description, pub_date FROM iu9Trofimenko")
-        if err != nil {
-            log.Printf("Ошибка получения ссылок из базы данных для watchDeletions: %v", err)
-            continue
-        }
-
-        dbLinks := make(map[string]NewsItem)
-        for rows.Next() {
-            var link, title, description string
-            var pubDate time.Time
-            err := rows.Scan(&link, &title, &description, &pubDate)
-            if err != nil {
-                log.Printf("Ошибка сканирования строки базы данных для watchDeletions: %v", err)
-                continue
-            }
-            dbLinks[link] = NewsItem{
-                Title:       title,
-                Link:        link,
-                Description: description,
-                PubDate:     pubDate,
-            }
-        }
-        rows.Close()
-
-        app.mutex.Lock()
-        for link, newsItem := range dbLinks {
-            if !rssLinks[link] {
-                // Новость удалена из RSS или вручную удалена из базы
-                if _, exists := app.deletedNews[link]; !exists {
-                    app.deletedNews[link] = DeletedNews{
-                        Item:      newsItem,
-                        DeletedAt: time.Now(),
-                    }
-                }
-            }
-        }
-        app.mutex.Unlock()
-    }
-}
-
-func main() {
-    app := NewApp()
-
-    // Запуск горутин
-    go app.broadcastNews()
-
-    // Парсинг и обновление RSS каждые 5 минут
-    go func() {
-        for {
-            app.parseAndUpdateRSS()
-            time.Sleep(5 * time.Minute)
-        }
-    }()
-
-    // Мониторинг удалений
-    go app.monitorDeletions()
-
-    // Наблюдение за удалениями
-    go app.watchDeletions()
-
-    // Запуск HTTP-сервера
-    app.ServeHTTP()
+// countNews возвращает количество новостей в базе данных
+func countNews() (int, error) {
+    var count int
+    err := db.QueryRow(`SELECT COUNT(*) FROM ` + tableName).Scan(&count)
+    return count, err
 }
