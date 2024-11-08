@@ -129,7 +129,7 @@ func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
         if err == sql.ErrNoRows {
             // Новость отсутствует, вставляем
             _, err = db.Exec("INSERT INTO iu9Trofimenko (title, link, description, pub_date) VALUES (?, ?, ?, ?)",
-                item.Title, item.Link, item.Description, item.PubDate)
+                item.Title, item.Link, item.Description, item.PubDate.Format("2006-01-02 15:04:05"))
             if err != nil {
                 return err
             }
@@ -145,7 +145,7 @@ func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
             if dbTitle != item.Title || dbDescription != item.Description {
                 // Обновляем запись
                 _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, pub_date = ? WHERE id = ?",
-                    item.Title, item.Description, item.PubDate, id)
+                    item.Title, item.Description, item.PubDate.Format("2006-01-02 15:04:05"), id)
                 if err != nil {
                     return err
                 }
@@ -165,10 +165,14 @@ func fetchNewsFromDB(db *sql.DB) ([]*NewsItem, error) {
     var newsItems []*NewsItem
     for rows.Next() {
         var item NewsItem
-        var pubDate time.Time
-        err := rows.Scan(&item.ID, &item.Title, &item.Link, &item.Description, &pubDate)
+        var pubDateStr string
+        err := rows.Scan(&item.ID, &item.Title, &item.Link, &item.Description, &pubDateStr)
         if err != nil {
             return nil, err
+        }
+        pubDate, err := time.Parse("2006-01-02 15:04:05", pubDateStr)
+        if err != nil {
+            pubDate = time.Now()
         }
         item.PubDate = pubDate
         newsItems = append(newsItems, &item)
