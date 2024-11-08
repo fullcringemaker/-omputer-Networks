@@ -9,8 +9,9 @@
         {{range .}}
         <div class="news-item">
             <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-            <p>{{.Description}}</p>
-            <small>{{.Date}}</small>
+            <p>{{.Content}}</p>
+            <p><strong>Автор:</strong> {{.Author}}</p>
+            <small>Дата: {{.Date}}</small>
             <hr>
         </div>
         {{end}}
@@ -32,14 +33,18 @@
                 link.textContent = item.Title;
                 title.appendChild(link);
 
-                var description = document.createElement('p');
-                description.textContent = item.Description;
+                var content = document.createElement('p');
+                content.innerHTML = item.Content;
+
+                var author = document.createElement('p');
+                author.innerHTML = '<strong>Автор:</strong> ' + item.Author;
 
                 var date = document.createElement('small');
-                date.textContent = item.Date;
+                date.textContent = 'Дата: ' + item.Date;
 
                 newsDiv.appendChild(title);
-                newsDiv.appendChild(description);
+                newsDiv.appendChild(content);
+                newsDiv.appendChild(author);
                 newsDiv.appendChild(date);
                 newsDiv.appendChild(document.createElement('hr'));
                 container.appendChild(newsDiv);
