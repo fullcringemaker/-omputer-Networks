@@ -2,8 +2,8 @@ package main
 
 import (
     "database/sql"
+    "encoding/json"
     "fmt"
-    "html/template"
     "log"
     "net/http"
     "sync"
@@ -17,10 +17,10 @@ import (
 
 // NewsItem представляет структуру новости
 type NewsItem struct {
-    Title       string
-    Link        string
-    Description string
-    PubDate     time.Time
+    Title       string    `json:"Title"`
+    Link        string    `json:"Link"`
+    Description string    `json:"Description"`
+    PubDate     time.Time `json:"PubDate"`
 }
 
 // WebSocketHub управляет подключениями WebSocket
@@ -57,8 +57,14 @@ func (h *WebSocketHub) run() {
             h.mu.Unlock()
         case news := <-h.broadcast:
             h.mu.Lock()
+            data, err := json.Marshal(news)
+            if err != nil {
+                log.Printf("Ошибка маршалинга новостей: %v", err)
+                h.mu.Unlock()
+                continue
+            }
             for conn := range h.clients {
-                err := conn.WriteJSON(news)
+                err := conn.WriteMessage(websocket.TextMessage, data)
                 if err != nil {
                     log.Printf("Ошибка отправки сообщения: %v", err)
                     conn.Close()
@@ -90,12 +96,7 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
         if err != nil {
             log.Printf("Ошибка получения новостей: %v", err)
         } else {
-            err = conn.WriteJSON(news)
-            if err != nil {
-                log.Printf("Ошибка отправки новостей: %v", err)
-                conn.Close()
-                hub.unregister <- conn
-            }
+            hub.broadcast <- news
         }
 
         // Чтение сообщений не требуется, поэтому просто слушаем закрытие соединения
@@ -115,7 +116,7 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
 
 func main() {
     // Подключение к базе данных
-    dsn := "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs"
+    dsn := "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs?charset=utf8mb4&parseTime=True&loc=Local"
     db, err := sql.Open("mysql", dsn)
     if err != nil {
         log.Fatalf("Не удалось подключиться к базе данных: %v", err)
@@ -152,20 +153,24 @@ func main() {
     // Первоначальный запуск
     parseAndUpdate(db, hub)
 
-    // Проверка на пустую таблицу и восстановление через 1 минуту
+    // Регулярное опрос базы данных на изменения каждые 2 секунды
     go func() {
+        var lastHash string
         for {
-            time.Sleep(30 * time.Second)
-            count, err := countNews(db)
+            time.Sleep(2 * time.Second)
+            news, err := fetchAllNews(db)
             if err != nil {
-                log.Printf("Ошибка подсчета новостей: %v", err)
+                log.Printf("Ошибка получения новостей для опроса: %v", err)
                 continue
             }
-            if count == 0 {
-                log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
-                time.AfterFunc(1*time.Minute, func() {
-                    parseAndUpdate(db, hub)
-                })
+           	currentHash, err := hashNews(news)
+            if err != nil {
+                log.Printf("Ошибка хеширования новостей: %v", err)
+                continue
+            }
+            if currentHash != lastHash {
+                lastHash = currentHash
+                hub.broadcast <- news
             }
         }
     }()
@@ -180,7 +185,7 @@ func main() {
 // parseAndUpdate выполняет парсинг RSS и обновляет базу данных
 func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
     fp := gofeed.NewParser()
-    feed, err := fp.ParseURL("https://kinolexx.ru/rss")
+    feed, err := fp.ParseURL("https://ldpr.ru/RSS")
     if err != nil {
         log.Printf("Ошибка парсинга RSS: %v", err)
         return
@@ -233,22 +238,22 @@ func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
     var news []NewsItem
     for rows.Next() {
         var item NewsItem
-        var pubDate string
+        var pubDate time.Time
         if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDate); err != nil {
             return nil, err
         }
-        item.PubDate, err = time.Parse("2006-01-02 15:04:05", pubDate)
-        if err != nil {
-            item.PubDate = time.Now()
-        }
+        item.PubDate = pubDate
         news = append(news, item)
     }
     return news, nil
 }
 
-// countNews возвращает количество новостей в таблице
-func countNews(db *sql.DB) (int, error) {
-    var count int
-    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
-    return count, err
+// hashNews создает хеш для списка новостей для сравнения изменений
+func hashNews(news []NewsItem) (string, error) {
+    data, err := json.Marshal(news)
+    if err != nil {
+        return "", err
+    }
+    // Используем простой хеш, например, длину строки JSON
+    return fmt.Sprintf("%d", len(data)), nil
 }
