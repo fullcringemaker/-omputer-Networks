@@ -46,15 +46,12 @@ https://ldpr.ru/rss
     </div>
 {{end}}
 
-https://news.rambler.ru/rss/technology/
-спарсить необходимо не новости, которые лежат на этом сайте, здесь лежит лишь пример для написания правильного парсинга. спарсить нужно именно то, что лежит на сайте https://news.rambler.ru/technology/
-
 вот запрос, которым создается таблица на сайте adminer
 CREATE TABLE `iu9Trofimenko` (
   `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
   `title` text COLLATE 'latin1_swedish_ci' NULL,
   `description` text COLLATE 'latin1_swedish_ci' NULL,
-  `date` datetime NULL,
+  `date` date NULL,
   `link` text COLLATE 'latin1_swedish_ci' NULL
 );
 
