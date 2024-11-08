@@ -44,7 +44,7 @@ type DeletedNews struct {
 // NewApp инициализирует новое приложение
 func NewApp() *App {
     tmpl := template.Must(template.ParseFiles("dashboard.html", "parser.html"))
-    db, err := sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs")
+    db, err := sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs?charset=latin1&parseTime=true")
     if err != nil {
         log.Fatalf("Ошибка подключения к базе данных: %v", err)
     }
@@ -53,8 +53,8 @@ func NewApp() *App {
     createTable := `
     CREATE TABLE IF NOT EXISTS iu9Trofimenko (
         id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        title TEXT COLLATE 'latin1_swedish_ci' NULL,
-        link TEXT COLLATE 'latin1_swedish_ci' NULL UNIQUE,
+        title VARCHAR(1024) COLLATE 'latin1_swedish_ci' NULL,
+        link VARCHAR(2083) COLLATE 'latin1_swedish_ci' NOT NULL UNIQUE,
         description TEXT COLLATE 'latin1_swedish_ci' NULL,
         pub_date DATETIME NULL
     ) ENGINE='InnoDB' COLLATE 'latin1_swedish_ci';
@@ -253,7 +253,10 @@ func (app *App) monitorDeletions() {
         existingLinks := make(map[string]bool)
         for rows.Next() {
             var link string
-            err := rows.Scan(&link, new(string), new(string), new(time.Time))
+            var title string
+            var description string
+            var pubDate time.Time
+            err := rows.Scan(&link, &title, &description, &pubDate)
             if err != nil {
                 log.Printf("Ошибка сканирования строки: %v", err)
                 continue
