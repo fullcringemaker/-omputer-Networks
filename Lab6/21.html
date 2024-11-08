@@ -1,55 +1,10 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <title>News Dashboard</title>
-</head>
-<body>
-    <div id="news-container">
-        {{range .}}
-        <div class="news-item">
-            <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-            <p>{{.Content}}</p>
-            <p><strong>Автор:</strong> {{.Author}}</p>
-            <small>Дата: {{.Date}}</small>
-            <hr>
-        </div>
-        {{end}}
+{{define "parser.html"}}
+{{range .}}
+    <div class="news-item">
+        <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+        <p>{{.Description}}</p>
+        <small>{{.Date}}</small>
+        <hr>
     </div>
-    <script>
-        var ws = new WebSocket("ws://" + window.location.host + "/ws");
-        ws.onmessage = function(event) {
-            var newsItems = JSON.parse(event.data);
-            var container = document.getElementById('news-container');
-            container.innerHTML = '';
-            newsItems.forEach(function(item) {
-                var newsDiv = document.createElement('div');
-                newsDiv.className = 'news-item';
-
-                var title = document.createElement('h2');
-                var link = document.createElement('a');
-                link.href = item.Link;
-                link.target = '_blank';
-                link.textContent = item.Title;
-                title.appendChild(link);
-
-                var content = document.createElement('p');
-                content.innerHTML = item.Content;
-
-                var author = document.createElement('p');
-                author.innerHTML = '<strong>Автор:</strong> ' + item.Author;
-
-                var date = document.createElement('small');
-                date.textContent = 'Дата: ' + item.Date;
-
-                newsDiv.appendChild(title);
-                newsDiv.appendChild(content);
-                newsDiv.appendChild(author);
-                newsDiv.appendChild(date);
-                newsDiv.appendChild(document.createElement('hr'));
-                container.appendChild(newsDiv);
-            });
-        };
-    </script>
-</body>
-</html>
+{{end}}
+{{end}}
