@@ -2,17 +2,49 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Новости</title>
+    <title>News Dashboard</title>
 </head>
 <body>
-    <h1>Последние новости</h1>
-    {{range .}}
-        <div>
+    <div id="news-container">
+        {{range .}}
+        <div class="news-item">
             <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
             <p>{{.Description}}</p>
-            <small>{{.Date.Format "02.01.2006 15:04"}}</small>
+            <small>{{.Date}}</small>
             <hr>
         </div>
-    {{end}}
+        {{end}}
+    </div>
+    <script>
+        var ws = new WebSocket("ws://" + window.location.host + "/ws");
+        ws.onmessage = function(event) {
+            var newsItems = JSON.parse(event.data);
+            var container = document.getElementById('news-container');
+            container.innerHTML = '';
+            newsItems.forEach(function(item) {
+                var newsDiv = document.createElement('div');
+                newsDiv.className = 'news-item';
+
+                var title = document.createElement('h2');
+                var link = document.createElement('a');
+                link.href = item.Link;
+                link.target = '_blank';
+                link.textContent = item.Title;
+                title.appendChild(link);
+
+                var description = document.createElement('p');
+                description.textContent = item.Description;
+
+                var date = document.createElement('small');
+                date.textContent = item.Date;
+
+                newsDiv.appendChild(title);
+                newsDiv.appendChild(description);
+                newsDiv.appendChild(date);
+                newsDiv.appendChild(document.createElement('hr'));
+                container.appendChild(newsDiv);
+            });
+        };
+    </script>
 </body>
 </html>
