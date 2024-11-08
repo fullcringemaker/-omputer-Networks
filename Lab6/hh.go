@@ -145,22 +145,10 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
         return
     }
 
-    // Используем подготовленные выражения для повышения производительности
-    stmt, err := db.Prepare(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
-        VALUES (?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-            title = VALUES(title),
-            description = VALUES(description),
-            pub_date = VALUES(pub_date)`)
-    if err != nil {
-        log.Printf("Ошибка подготовки запроса: %v", err)
-        return
-    }
-    defer stmt.Close()
-
     for _, item := range feed.Items {
         title := unidecode.Unidecode(item.Title)
-        link := unidecode.Unidecode(item.Link)
+        // Не применяем unidecode к ссылке, чтобы сохранить её уникальность
+        link := item.Link
         description := unidecode.Unidecode(item.Description)
         var pubDate time.Time
         if item.PublishedParsed != nil {
@@ -170,7 +158,13 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
         }
 
         // Вставка с обновлением при дубликате
-        _, err := stmt.Exec(title, link, description, pubDate)
+        _, err := db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                description = VALUES(description),
+                pub_date = VALUES(pub_date)`,
+            title, link, description, pubDate)
         if err != nil {
             log.Printf("Ошибка вставки/обновления новости: %v", err)
         }
@@ -202,11 +196,7 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
         }
 
         // Создание хеша для текущего списка новостей
-        newsJSON, err := json.Marshal(news)
-        if err != nil {
-            log.Printf("Ошибка маршалинга новостей: %v", err)
-            continue
-        }
+        newsJSON, _ := json.Marshal(news)
         currentHash := fmt.Sprintf("%x", md5.Sum(newsJSON))
 
         if currentHash != lastNewsHash {
@@ -242,30 +232,22 @@ func main() {
         http.ServeFile(w, r, "parser.html")
     })
 
-    // Запуск веб-сервера
-    server := &http.Server{
-        Addr: ":9742",
-    }
-
-    go func() {
-        log.Println("Сервер запущен на порту 9742")
-        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            log.Fatalf("Ошибка запуска сервера: %v", err)
-        }
-    }()
-
-    // Первоначальный запуск парсинга
-    go parseAndUpdate(db, hub)
-
     // Запуск парсинга и обновления каждые 5 минут
     go func() {
         ticker := time.NewTicker(5 * time.Minute)
         defer ticker.Stop()
         for {
-            <-ticker.C
             parseAndUpdate(db, hub)
+            <-ticker.C
         }
     }()
+
+    // Первоначальный запуск
+    parseAndUpdate(db, hub)
+
+    // Флаг для предотвращения многократного восстановления
+    var restoreMutex sync.Mutex
+    restorationScheduled := false
 
     // Запуск мониторинга базы данных каждые 2 секунды
     go monitorDatabase(db, hub, 2*time.Second)
@@ -280,16 +262,49 @@ func main() {
                 continue
             }
             if count == 0 {
-                log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
-                time.AfterFunc(1*time.Minute, func() {
-                    parseAndUpdate(db, hub)
-                })
+                restoreMutex.Lock()
+                if !restorationScheduled {
+                    restorationScheduled = true
+                    restoreMutex.Unlock()
+                    log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
+                    go func() {
+                        time.Sleep(1 * time.Minute)
+                        // Проверяем, всё ещё ли таблица пуста
+                        countAfterDelay, err := countNews(db)
+                        if err != nil {
+                            log.Printf("Ошибка подсчета новостей после задержки: %v", err)
+                            restoreMutex.Lock()
+                            restorationScheduled = false
+                            restoreMutex.Unlock()
+                            return
+                        }
+                        if countAfterDelay == 0 {
+                            parseAndUpdate(db, hub)
+                            log.Println("Новости восстановлены из RSS-канала.")
+                        }
+                        restoreMutex.Lock()
+                        restorationScheduled = false
+                        restoreMutex.Unlock()
+                    }()
+                } else {
+                    restoreMutex.Unlock()
+                }
             }
         }
     }()
 
-    // Блокировка основного потока
-    select {}
+    // Настройка веб-сервера с тайм-аутами для ускорения запуска
+    server := &http.Server{
+        Addr:         ":9742",
+        ReadTimeout:  3 * time.Second,  // Уменьшен ReadTimeout до 3 секунд
+        WriteTimeout: 3 * time.Second,  // Уменьшен WriteTimeout до 3 секунд
+        IdleTimeout:  5 * time.Second,  // Уменьшен IdleTimeout до 5 секунд
+    }
+
+    fmt.Println("Сервер запущен на порту 9742")
+    if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+        log.Fatalf("Ошибка запуска сервера: %v", err)
+    }
 }
 
 // countNews возвращает количество новостей в таблице
