@@ -1,24 +1,10 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>News Dashboard</title>
-    <script>
-        var ws = new WebSocket("ws://" + location.host + "/ws");
-        ws.onmessage = function(event) {
-            var newsList = JSON.parse(event.data);
-            var newsDiv = document.getElementById("news");
-            newsDiv.innerHTML = "";
-            for (var i = 0; i < newsList.length; i++) {
-                var div = document.createElement("div");
-                div.innerHTML = newsList[i];
-                newsDiv.appendChild(div);
-            }
-        };
-    </script>
-</head>
-<body>
-    <h1>News Dashboard</h1>
-    <div id="news"></div>
-</body>
-</html>
+{{define "news"}}
+    {{range .}}
+        <div class="news-item">
+            <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+            <p>{{.Description}}</p>
+            <small>{{.PubDate.Format "02.01.2006 15:04"}}</small>
+            <hr>
+        </div>
+    {{end}}
+{{end}}
