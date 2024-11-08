@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -29,6 +30,8 @@ type WebSocketHub struct {
 	broadcast  chan []NewsItem
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
+	mu         sync.Mutex
+	lastNews   []NewsItem
 }
 
 func newHub() *WebSocketHub {
@@ -37,6 +40,7 @@ func newHub() *WebSocketHub {
 		broadcast:  make(chan []NewsItem),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
+		lastNews:   []NewsItem{},
 	}
 }
 
@@ -44,26 +48,36 @@ func (h *WebSocketHub) run() {
 	for {
 		select {
 		case conn := <-h.register:
+			h.mu.Lock()
 			h.clients[conn] = true
+			h.mu.Unlock()
 		case conn := <-h.unregister:
+			h.mu.Lock()
 			if _, ok := h.clients[conn]; ok {
 				delete(h.clients, conn)
 				conn.Close()
 			}
+			h.mu.Unlock()
 		case news := <-h.broadcast:
 			message, err := json.Marshal(news)
 			if err != nil {
 				log.Println("Ошибка маршалинга:", err)
 				continue
 			}
-			for conn := range h.clients {
-				err := conn.WriteMessage(websocket.TextMessage, message)
-				if err != nil {
-					log.Println("Ошибка отправки сообщения:", err)
-					conn.Close()
-					delete(h.clients, conn)
+			h.mu.Lock()
+			// Проверка, отличаются ли текущие новости от последних отправленных
+			if !newsEqual(h.lastNews, news) {
+				for conn := range h.clients {
+					err := conn.WriteMessage(websocket.TextMessage, message)
+					if err != nil {
+						log.Println("Ошибка отправки сообщения:", err)
+						conn.Close()
+						delete(h.clients, conn)
+					}
 				}
+				h.lastNews = news
 			}
+			h.mu.Unlock()
 		}
 	}
 }
@@ -72,6 +86,33 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+}
+
+// Функция для сравнения двух списков новостей
+func newsEqual(a, b []NewsItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID ||
+			!stringPtrEqual(a[i].Title, b[i].Title) ||
+			!stringPtrEqual(a[i].Link, b[i].Link) ||
+			!stringPtrEqual(a[i].Description, b[i].Description) ||
+			!stringPtrEqual(a[i].PubDate, b[i].PubDate) {
+			return false
+		}
+	}
+	return true
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 func main() {
@@ -96,10 +137,12 @@ func main() {
 	hub := newHub()
 	go hub.run()
 
+	// Обработчик WebSocket
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWebSocket(hub, db, w, r)
 	})
 
+	// Обработчики статических HTML-страниц
 	http.HandleFunc("/dashboard.html", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "dashboard.html")
 	})
@@ -108,7 +151,7 @@ func main() {
 		http.ServeFile(w, r, "parser.html")
 	})
 
-	// Парсинг RSS и обновление базы данных
+	// Парсинг RSS и обновление базы данных каждые 5 минут
 	go func() {
 		for {
 			err := parseAndUpdate(db, hub)
@@ -116,6 +159,21 @@ func main() {
 				log.Println("Ошибка при парсинге или обновлении:", err)
 			}
 			time.Sleep(5 * time.Minute) // Периодичность обновления
+		}
+	}()
+
+	// Периодическое (каждые 2 секунды) обновление dashboard через WebSocket
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			news, err := getAllNews(db)
+			if err != nil {
+				log.Println("Ошибка получения новостей для WebSocket:", err)
+				continue
+			}
+			hub.broadcast <- news
 		}
 	}()
 
