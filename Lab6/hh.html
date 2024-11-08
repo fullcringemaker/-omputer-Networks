@@ -1,1 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard</title>
+    <script>
+        const socket = new WebSocket("ws://localhost:9742/ws");
+        socket.onmessage = function(event) {
+            location.reload();
+        };
+    </script>
+</head>
+<body>
+    <h1>Новости из RSS</h1>
+    {{range .}}
+        {{template "newsItem" .}}
+    {{end}}
+</body>
+</html>
 
