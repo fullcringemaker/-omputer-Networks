@@ -1,1 +1,3 @@
-2024/11/08 06:09:12 Ошибка при получении данных из базы: sql: Scan error on column index 4, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 22:00:34 Ошибка при парсинге или обновлении: ошибка получения всех новостей: sql: Scan error on column index 1, name "title": converting NULL to string is unsupported
+
+После запуска кода возникает следующая ошибка. Исправь код и предсотавь мне переделанный исправленный вариант
