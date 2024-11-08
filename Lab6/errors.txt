@@ -1,10 +1,3 @@
--- SQL to create the table
-CREATE TABLE `iu9Trofimenko` (
-  `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `title` text CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
-  `description` text CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
-  `date` date NULL,
-  `link` text CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
-  `author` text CHARACTER SET utf8 COLLATE utf8_general_ci NULL,
-  `content` text CHARACTER SET utf8 COLLATE utf8_general_ci NULL
-);
+PS D:\network_testing> go run main.go
+# command-line-arguments
+.\main.go:258:36: cannot use &buf (value of type *string) as io.Writer value in argument to templates.ExecuteTemplate: *string does not implement io.Writer (missing method Write)
