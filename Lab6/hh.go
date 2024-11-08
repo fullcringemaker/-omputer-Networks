@@ -24,11 +24,11 @@ type NewsItem struct {
 }
 
 var (
-    clients   = make(map[*websocket.Conn]bool)
-    broadcast = make(chan []*NewsItem)
-    upgrader  = websocket.Upgrader{}
-    mutex     = &sync.Mutex{}
-    allowInsert = true // Флаг, разрешающий вставку
+    clients            = make(map[*websocket.Conn]bool)
+    broadcast          = make(chan []*NewsItem)
+    upgrader           = websocket.Upgrader{}
+    mutex              = &sync.Mutex{}
+    initialPopulation  = false
 )
 
 func main() {
@@ -43,6 +43,25 @@ func main() {
     db.SetConnMaxLifetime(time.Minute * 3)
     db.SetMaxOpenConns(10)
     db.SetMaxIdleConns(10)
+
+    // Проверка, пуста ли таблица
+    count, err := getNewsCount(db)
+    if err != nil {
+        log.Fatal("Ошибка при получении количества новостей:", err)
+    }
+
+    if count == 0 {
+        log.Println("Таблица пуста. Выполняется начальная загрузка новостей...")
+        newsItems, err := parseRSS()
+        if err != nil {
+            log.Fatal("Ошибка при парсинге RSS:", err)
+        }
+        err = insertInitialNews(db, newsItems)
+        if err != nil {
+            log.Fatal("Ошибка при вставке начальных новостей:", err)
+        }
+        log.Println("Начальная загрузка новостей завершена.")
+    }
 
     // Запуск горутины для обработки сообщений WebSocket
     go handleMessages()
@@ -67,7 +86,7 @@ func main() {
 
     // Запуск периодического обновления данных
     go func() {
-        ticker := time.NewTicker(2 * time.Second) // Интервал обновления 2 секунды
+        ticker := time.NewTicker(1 * time.Second) // Установка интервала обновления в 1 секунду
         defer ticker.Stop()
         for {
             <-ticker.C
@@ -96,6 +115,32 @@ func main() {
     if err != nil {
         log.Fatal("Ошибка при запуске сервера:", err)
     }
+}
+
+// getNewsCount возвращает количество записей в таблице iu9Trofimenko
+func getNewsCount(db *sql.DB) (int, error) {
+    var count int
+    err := db.QueryRow("SELECT COUNT(*) FROM iu9Trofimenko").Scan(&count)
+    if err != nil {
+        return 0, err
+    }
+    return count, nil
+}
+
+// insertInitialNews выполняет начальную вставку новостей в таблицу
+func insertInitialNews(db *sql.DB, newsItems []*NewsItem) error {
+    for _, item := range newsItems {
+        // Обработка русских символов
+        title := unidecode.Unidecode(item.Title)
+        description := unidecode.Unidecode(item.Description)
+
+        _, err := db.Exec("INSERT INTO iu9Trofimenko (title, link, description, pub_date) VALUES (?, ?, ?, ?)",
+            title, item.Link, description, item.PubDate.Format("2006-01-02 15:04:05"))
+        if err != nil {
+            return err
+        }
+    }
+    return nil
 }
 
 func parseRSS() ([]*NewsItem, error) {
@@ -135,24 +180,10 @@ func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
     }
 
     if count == 0 {
-        if allowInsert {
-            // Первый запуск: вставляем все новости
-            for _, item := range newsItems {
-                title := unidecode.Unidecode(item.Title)
-                description := unidecode.Unidecode(item.Description)
-
-                _, err = db.Exec("INSERT INTO iu9Trofimenko (title, link, description, pub_date) VALUES (?, ?, ?, ?)",
-                    title, item.Link, description, item.PubDate.Format("2006-01-02 15:04:05"))
-                if err != nil {
-                    return err
-                }
-            }
-            allowInsert = false // Больше не разрешаем автоматическую вставку
-        }
+        // Таблица пуста и начальная загрузка уже выполнена, не вставляем снова
         return nil
     }
 
-    // Если таблица не пуста, продолжаем обновлять записи
     for _, item := range newsItems {
         // Обработка русских символов
         title := unidecode.Unidecode(item.Title)
