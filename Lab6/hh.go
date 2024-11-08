@@ -1,6 +1,7 @@
 package main
 
 import (
+    "crypto/md5"
     "database/sql"
     "encoding/json"
     "fmt"
@@ -57,14 +58,8 @@ func (h *WebSocketHub) run() {
             h.mu.Unlock()
         case news := <-h.broadcast:
             h.mu.Lock()
-            data, err := json.Marshal(news)
-            if err != nil {
-                log.Printf("Ошибка маршалинга новостей: %v", err)
-                h.mu.Unlock()
-                continue
-            }
             for conn := range h.clients {
-                err := conn.WriteMessage(websocket.TextMessage, data)
+                err := conn.WriteJSON(news)
                 if err != nil {
                     log.Printf("Ошибка отправки сообщения: %v", err)
                     conn.Close()
@@ -82,6 +77,28 @@ var upgrader = websocket.Upgrader{
     },
 }
 
+// fetchAllNews извлекает все новости из базы данных
+func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
+    rows, err := db.Query(`SELECT title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC`)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var news []NewsItem
+    for rows.Next() {
+        var item NewsItem
+        var pubDate time.Time
+        if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDate); err != nil {
+            return nil, err
+        }
+        item.PubDate = pubDate
+        news = append(news, item)
+    }
+    return news, nil
+}
+
+// serveWs обрабатывает WebSocket-соединения
 func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         conn, err := upgrader.Upgrade(w, r, nil)
@@ -96,7 +113,12 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
         if err != nil {
             log.Printf("Ошибка получения новостей: %v", err)
         } else {
-            hub.broadcast <- news
+            err = conn.WriteJSON(news)
+            if err != nil {
+                log.Printf("Ошибка отправки новостей: %v", err)
+                conn.Close()
+                hub.unregister <- conn
+            }
         }
 
         // Чтение сообщений не требуется, поэтому просто слушаем закрытие соединения
@@ -111,6 +133,86 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
                 }
             }
         }()
+    }
+}
+
+// parseAndUpdate выполняет парсинг RSS и обновляет базу данных
+func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
+    fp := gofeed.NewParser()
+    feed, err := fp.ParseURL("https://ldpr.ru/RSS")
+    if err != nil {
+        log.Printf("Ошибка парсинга RSS: %v", err)
+        return
+    }
+
+    // Используем подготовленные выражения для повышения производительности
+    stmt, err := db.Prepare(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            description = VALUES(description),
+            pub_date = VALUES(pub_date)`)
+    if err != nil {
+        log.Printf("Ошибка подготовки запроса: %v", err)
+        return
+    }
+    defer stmt.Close()
+
+    for _, item := range feed.Items {
+        title := unidecode.Unidecode(item.Title)
+        link := unidecode.Unidecode(item.Link)
+        description := unidecode.Unidecode(item.Description)
+        var pubDate time.Time
+        if item.PublishedParsed != nil {
+            pubDate = *item.PublishedParsed
+        } else {
+            pubDate = time.Now()
+        }
+
+        // Вставка с обновлением при дубликате
+        _, err := stmt.Exec(title, link, description, pubDate)
+        if err != nil {
+            log.Printf("Ошибка вставки/обновления новости: %v", err)
+        }
+    }
+
+    // Получение обновленного списка новостей
+    news, err := fetchAllNews(db)
+    if err != nil {
+        log.Printf("Ошибка получения новостей: %v", err)
+        return
+    }
+
+    // Отправка обновлений через WebSocket
+    hub.broadcast <- news
+}
+
+// monitorDatabase отслеживает изменения в базе данных и обновляет дэшборд
+func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
+    ticker := time.NewTicker(interval)
+    defer ticker.Stop()
+
+    var lastNewsHash string
+
+    for range ticker.C {
+        news, err := fetchAllNews(db)
+        if err != nil {
+            log.Printf("Ошибка при мониторинге базы данных: %v", err)
+            continue
+        }
+
+        // Создание хеша для текущего списка новостей
+        newsJSON, err := json.Marshal(news)
+        if err != nil {
+            log.Printf("Ошибка маршалинга новостей: %v", err)
+            continue
+        }
+        currentHash := fmt.Sprintf("%x", md5.Sum(newsJSON))
+
+        if currentHash != lastNewsHash {
+            lastNewsHash = currentHash
+            hub.broadcast <- news
+        }
     }
 }
 
@@ -140,120 +242,59 @@ func main() {
         http.ServeFile(w, r, "parser.html")
     })
 
+    // Запуск веб-сервера
+    server := &http.Server{
+        Addr: ":9742",
+    }
+
+    go func() {
+        log.Println("Сервер запущен на порту 9742")
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("Ошибка запуска сервера: %v", err)
+        }
+    }()
+
+    // Первоначальный запуск парсинга
+    go parseAndUpdate(db, hub)
+
     // Запуск парсинга и обновления каждые 5 минут
     go func() {
         ticker := time.NewTicker(5 * time.Minute)
         defer ticker.Stop()
         for {
-            parseAndUpdate(db, hub)
             <-ticker.C
+            parseAndUpdate(db, hub)
         }
     }()
 
-    // Первоначальный запуск
-    parseAndUpdate(db, hub)
+    // Запуск мониторинга базы данных каждые 2 секунды
+    go monitorDatabase(db, hub, 2*time.Second)
 
-    // Регулярное опрос базы данных на изменения каждые 2 секунды
+    // Проверка на пустую таблицу и восстановление через 1 минуту
     go func() {
-        var lastHash string
         for {
-            time.Sleep(2 * time.Second)
-            news, err := fetchAllNews(db)
+            time.Sleep(30 * time.Second)
+            count, err := countNews(db)
             if err != nil {
-                log.Printf("Ошибка получения новостей для опроса: %v", err)
+                log.Printf("Ошибка подсчета новостей: %v", err)
                 continue
             }
-           	currentHash, err := hashNews(news)
-            if err != nil {
-                log.Printf("Ошибка хеширования новостей: %v", err)
-                continue
-            }
-            if currentHash != lastHash {
-                lastHash = currentHash
-                hub.broadcast <- news
+            if count == 0 {
+                log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
+                time.AfterFunc(1*time.Minute, func() {
+                    parseAndUpdate(db, hub)
+                })
             }
         }
     }()
 
-    // Запуск веб-сервера
-    fmt.Println("Сервер запущен на порту 9742")
-    if err := http.ListenAndServe(":9742", nil); err != nil {
-        log.Fatalf("Ошибка запуска сервера: %v", err)
-    }
+    // Блокировка основного потока
+    select {}
 }
 
-// parseAndUpdate выполняет парсинг RSS и обновляет базу данных
-func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
-    fp := gofeed.NewParser()
-    feed, err := fp.ParseURL("https://ldpr.ru/RSS")
-    if err != nil {
-        log.Printf("Ошибка парсинга RSS: %v", err)
-        return
-    }
-
-    for _, item := range feed.Items {
-        title := unidecode.Unidecode(item.Title)
-        link := unidecode.Unidecode(item.Link)
-        description := unidecode.Unidecode(item.Description)
-        var pubDate time.Time
-        if item.PublishedParsed != nil {
-            pubDate = *item.PublishedParsed
-        } else {
-            pubDate = time.Now()
-        }
-
-        // Вставка с обновлением при дубликате
-        _, err := db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
-            VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                link = VALUES(link),
-                description = VALUES(description),
-                pub_date = VALUES(pub_date)`,
-            title, link, description, pubDate)
-        if err != nil {
-            log.Printf("Ошибка вставки новости: %v", err)
-        }
-    }
-
-    // Получение обновленного списка новостей
-    news, err := fetchAllNews(db)
-    if err != nil {
-        log.Printf("Ошибка получения новостей: %v", err)
-        return
-    }
-
-    // Отправка обновлений через WebSocket
-    hub.broadcast <- news
-}
-
-// fetchAllNews извлекает все новости из базы данных
-func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
-    rows, err := db.Query(`SELECT title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC`)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-
-    var news []NewsItem
-    for rows.Next() {
-        var item NewsItem
-        var pubDate time.Time
-        if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDate); err != nil {
-            return nil, err
-        }
-        item.PubDate = pubDate
-        news = append(news, item)
-    }
-    return news, nil
-}
-
-// hashNews создает хеш для списка новостей для сравнения изменений
-func hashNews(news []NewsItem) (string, error) {
-    data, err := json.Marshal(news)
-    if err != nil {
-        return "", err
-    }
-    // Используем простой хеш, например, длину строки JSON
-    return fmt.Sprintf("%d", len(data)), nil
+// countNews возвращает количество новостей в таблице
+func countNews(db *sql.DB) (int, error) {
+    var count int
+    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
+    return count, err
 }
