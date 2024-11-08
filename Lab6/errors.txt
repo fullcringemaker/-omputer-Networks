@@ -1,3 +1,4 @@
-2024/11/08 22:00:34 Ошибка при парсинге или обновлении: ошибка получения всех новостей: sql: Scan error on column index 1, name "title": converting NULL to string is unsupported
+2024/11/08 22:47:44 Ошибка создания таблицы: Error 1170 (42000): BLOB/TEXT column 'link' used in key specification without a key length
+exit status 1
 
 После запуска кода возникает следующая ошибка. Исправь код и предсотавь мне переделанный исправленный вариант
