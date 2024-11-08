@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bytes"
     "database/sql"
     "fmt"
     "html/template"
@@ -254,12 +255,12 @@ func broadcastNews(news []NewsItem) {
 func sendNewsToClient(conn *websocket.Conn, news []NewsItem) error {
     var renderedNews []string
     for _, item := range news {
-        var buf string
+        var buf bytes.Buffer
         err := templates.ExecuteTemplate(&buf, "newsItem", item)
         if err != nil {
             return err
         }
-        renderedNews = append(renderedNews, buf)
+        renderedNews = append(renderedNews, buf.String())
     }
     return conn.WriteJSON(renderedNews)
 }
