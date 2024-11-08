@@ -1,3 +1,4 @@
 PS D:\network_testing> go run main.go
-2024/11/08 02:05:08 Server started on port 9742
-2024/11/08 02:05:20 Error querying news items: Error 1054 (42S22): Unknown column 'pubDate' in 'field list'
+# command-line-arguments
+.\main.go:271:10: cannot use time.Now() (value of type time.Time) as *time.Time value in assignment
+.\main.go:280:10: cannot use time.Now() (value of type time.Time) as *time.Time value in assignment
