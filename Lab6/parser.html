@@ -2,19 +2,16 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Парсер Новостей</title>
+    <title>Parser</title>
 </head>
 <body>
-    <h1>Парсер RSS-канала</h1>
-    <div id="parser-container">
-        {{range .}}
-            <div class="news-item">
-                <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-                <p>{{.Description}}</p>
-                <small>{{.PubDate}}</small>
-                <hr>
-            </div>
-        {{end}}
+    {{range .}}
+    <div class="news-item">
+        <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+        <p>{{.Description}}</p>
+        <small>{{.PubDate.Format "02.01.2006 15:04"}}</small>
+        <hr>
     </div>
+    {{end}}
 </body>
 </html>
