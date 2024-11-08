@@ -60,18 +60,18 @@ func main() {
 	createTableQuery := `
 	CREATE TABLE IF NOT EXISTS iu9Trofimenko (
 	  id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-	  title TEXT COLLATE 'utf8mb4_unicode_ci' NULL,
-	  link TEXT COLLATE 'utf8mb4_unicode_ci' NULL,
-	  description TEXT COLLATE 'utf8mb4_unicode_ci' NULL,
+	  title TEXT COLLATE 'latin1_swedish_ci' NULL,
+	  link TEXT COLLATE 'latin1_swedish_ci' NULL,
+	  description TEXT COLLATE 'latin1_swedish_ci' NULL,
 	  pub_date DATETIME NULL
-	) ENGINE='InnoDB' COLLATE='utf8mb4_unicode_ci';
+	) ENGINE='InnoDB' COLLATE='latin1_swedish_ci';
 	`
 	_, err = db.Exec(createTableQuery)
 	if err != nil {
 		log.Fatal("Ошибка создания таблицы:", err)
 	}
 
-	// Парсинг RSS и обновление базы данных
+	// Первоначальный парсинг RSS и обновление базы данных
 	err = parseAndUpdateRSS(db)
 	if err != nil {
 		log.Println("Ошибка при парсинге RSS:", err)
@@ -85,15 +85,26 @@ func main() {
 	// Статические файлы
 	http.Handle("/", http.FileServer(http.Dir("./")))
 
-	// Запуск горутины для периодического обновления
+	// Запуск горутины для периодического обновления RSS (каждые 30 секунд)
 	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
 		for {
-			time.Sleep(30 * time.Second) // Интервал обновления
+			<-ticker.C
 			err := parseAndUpdateRSS(db)
 			if err != nil {
 				log.Println("Ошибка при парсинге RSS:", err)
 			}
-			// Отправка обновленных данных клиентам
+			notifyClients(db)
+		}
+	}()
+
+	// Запуск горутины для периодической проверки базы данных (каждые 2 секунды)
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
 			notifyClients(db)
 		}
 	}()
@@ -163,10 +174,9 @@ func parseAndUpdateRSS(db *sql.DB) error {
 		title := unidecode.Unidecode(item.Title)
 		link := item.Link
 		description := unidecode.Unidecode(item.Description)
-		pubDate, err := item.PublishedParsed, error(nil)
-		if item.PublishedParsed == nil {
-			pubDate = new(time.Time)
-			*pubDate = time.Now()
+		pubDate := time.Now()
+		if item.PublishedParsed != nil {
+			pubDate = *item.PublishedParsed
 		}
 
 		// Проверка на существование записи
@@ -230,6 +240,10 @@ func sendNews(conn *websocket.Conn, db *sql.DB) {
 	err = conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
 		log.Println("Ошибка отправки данных клиенту:", err)
+		clientsLock.Lock()
+		delete(clients, conn)
+		clientsLock.Unlock()
+		conn.Close()
 	}
 }
 
