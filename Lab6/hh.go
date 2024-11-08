@@ -180,18 +180,22 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
     hub.broadcast <- news
 }
 
+// countNews возвращает количество новостей в таблице
+func countNews(db *sql.DB) (int, error) {
+    var count int
+    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
+    return count, err
+}
+
 // monitorDatabase отслеживает изменения в базе данных и обновляет дэшборд
-func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
+func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, timerDuration time.Duration) {
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
 
     var lastNewsHash string
-
-    // Добавляем переменные для управления таймером
-    var (
-        restoreTimer *time.Timer
-        timerMutex   sync.Mutex
-    )
+    var timer *time.Timer
+    var timerActive bool
+    var timerMu sync.Mutex
 
     for range ticker.C {
         news, err := fetchAllNews(db)
@@ -209,45 +213,42 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
             hub.broadcast <- news
         }
 
-        // Проверка количества новостей для управления таймером восстановления
-        count, err := countNews(db)
-        if err != nil {
-            log.Printf("Ошибка подсчета новостей: %v", err)
-            continue
-        }
-
-        if count == 0 {
-            log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
-            timerMutex.Lock()
-            if restoreTimer == nil {
-                restoreTimer = time.AfterFunc(1*time.Minute, func() {
+        // Проверка, пуста ли таблица
+        if len(news) == 0 {
+            timerMu.Lock()
+            if !timerActive {
+                log.Println("Таблица пуста. Запуск таймера на 1 минуту для восстановления данных...")
+                timer = time.AfterFunc(timerDuration, func() {
+                    log.Println("Таймер завершён. Восстановление данных из RSS...")
                     parseAndUpdate(db, hub)
-                    // После выполнения восстановления сбрасываем указатель на таймер
-                    timerMutex.Lock()
-                    restoreTimer = nil
-                    timerMutex.Unlock()
+
+                    // После восстановления проверяем, заполнилась ли таблица
+                    newCount, err := countNews(db)
+                    if err != nil {
+                        log.Printf("Ошибка подсчёта новостей после восстановления: %v", err)
+                        return
+                    }
+                    if newCount > 0 {
+                        timerMu.Lock()
+                        timerActive = false
+                        timerMu.Unlock()
+                        log.Println("Данные успешно восстановлены. Таймер отключён.")
+                    }
                 })
+                timerActive = true
             }
-            timerMutex.Unlock()
+            timerMu.Unlock()
         } else {
-            // Если таблица не пуста, остановить любой запущенный таймер восстановления
-            timerMutex.Lock()
-            if restoreTimer != nil {
-                if restoreTimer.Stop() {
-                    log.Println("Таймер восстановления данных остановлен, таблица заполнена.")
-                }
-                restoreTimer = nil
+            // Если таблица не пуста, отменяем таймер, если он активен
+            timerMu.Lock()
+            if timerActive && timer != nil {
+                log.Println("Таблица заполнена. Отмена активного таймера.")
+                timer.Stop()
+                timerActive = false
             }
-            timerMutex.Unlock()
+            timerMu.Unlock()
         }
     }
-}
-
-// md5Sum возвращает MD5-хеш данных
-func md5Sum(data []byte) []byte {
-    hash := md5.New()
-    hash.Write(data)
-    return hash.Sum(nil)
 }
 
 func main() {
@@ -276,6 +277,24 @@ func main() {
         http.ServeFile(w, r, "parser.html")
     })
 
+    // Запуск веб-сервера
+    server := &http.Server{
+        Addr: ":9742",
+    }
+
+    go func() {
+        log.Println("Запуск веб-сервера на порту 9742")
+        if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("Ошибка запуска сервера: %v", err)
+        }
+    }()
+
+    // Первоначальный запуск парсинга
+    parseAndUpdate(db, hub)
+
+    // Запуск мониторинга базы данных каждые 2 секунды с таймером восстановления в 1 минуту
+    go monitorDatabase(db, hub, 2*time.Second, 1*time.Minute)
+
     // Запуск парсинга и обновления каждые 5 минут
     go func() {
         ticker := time.NewTicker(5 * time.Minute)
@@ -286,29 +305,9 @@ func main() {
         }
     }()
 
-    // Первоначальный запуск
-    parseAndUpdate(db, hub)
+    // Минимизация задержки при запуске для уменьшения времени появления брандмауэра
+    // Убедимся, что все горутины запущены быстро и нет блокирующих операций
 
-    // Запуск мониторинга базы данных каждые 2 секунды
-    go monitorDatabase(db, hub, 2*time.Second)
-
-    // Запуск веб-сервера с уменьшенными таймаутами для уменьшения задержки
-    server := &http.Server{
-        Addr:         ":9742",
-        ReadTimeout:  5 * time.Second,  // Уменьшен таймаут чтения
-        WriteTimeout: 10 * time.Second, // Уменьшен таймаут записи
-        IdleTimeout:  15 * time.Second,
-    }
-
-    fmt.Println("Сервер запущен на порту 9742")
-    if err := server.ListenAndServe(); err != nil {
-        log.Fatalf("Ошибка запуска сервера: %v", err)
-    }
-}
-
-// countNews возвращает количество новостей в таблице
-func countNews(db *sql.DB) (int, error) {
-    var count int
-    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
-    return count, err
+    // Ожидание завершения (необходимо для того, чтобы main не завершился)
+    select {}
 }
