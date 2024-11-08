@@ -1,8 +1,21 @@
-{{range .}}
-    <div class="news-item">
-        <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-        <p>{{.Description}}</p>
-        <small>{{.PubDate}}</small>
-        <hr>
-    </div>
-{{end}}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Шаблон Парсера Новостей</title>
+    <script id="news-template" type="text/template">
+        {{range .}}
+            <div class="news-item">
+                <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+                <p>{{.Description}}</p>
+                <small>{{.PubDate}}</small>
+                <hr>
+            </div>
+        {{end}}
+    </script>
+</head>
+<body>
+    <h1>Шаблон для отображения новостей</h1>
+    <!-- Этот файл содержит шаблон и может использоваться для разработки -->
+</body>
+</html>
