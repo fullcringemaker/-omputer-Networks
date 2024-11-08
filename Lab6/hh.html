@@ -11,7 +11,7 @@
     </div>
 
     <script>
-        const ws = new WebSocket("ws://" + window.location.hostname + ":9742/ws");
+        const ws = new WebSocket("ws://localhost:9742/ws");
 
         ws.onopen = function() {
             console.log("WebSocket подключен");
