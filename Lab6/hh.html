@@ -30,15 +30,14 @@
                 const link = document.createElement("a");
                 link.href = item.link;
                 link.target = "_blank";
-                link.textContent = item.title;
+                link.textContent = item.title || "Без заголовка";
                 title.appendChild(link);
 
                 const description = document.createElement("p");
-                description.textContent = item.description;
+                description.textContent = item.description || "Без описания";
 
                 const pubDate = document.createElement("small");
-                const date = new Date(item.pub_date);
-                pubDate.textContent = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth()+1).toString().padStart(2, '0')}.${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+                pubDate.textContent = item.pub_date || "Неизвестная дата";
 
                 const hr = document.createElement("hr");
 
