@@ -2,70 +2,62 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Дэшборд Новостей</title>
-    <script>
-        let socket;
-
-        function connectWebSocket() {
-            socket = new WebSocket("ws://localhost:9742/ws");
-
-            socket.onopen = function() {
-                console.log("WebSocket подключен");
-            };
-
-            socket.onmessage = function(event) {
-                const news = JSON.parse(event.data);
-                const newsContainer = document.getElementById("news-container");
-                newsContainer.innerHTML = ""; // Очистка контейнера
-
-                news.forEach(function(item) {
-                    const newsItem = document.createElement("div");
-                    newsItem.className = "news-item";
-
-                    const title = document.createElement("h2");
-                    const link = document.createElement("a");
-                    link.href = item.link;
-                    link.target = "_blank";
-                    link.textContent = item.title;
-                    title.appendChild(link);
-
-                    const description = document.createElement("p");
-                    description.textContent = item.description;
-
-                    const pubDate = document.createElement("small");
-                    pubDate.textContent = item.pub_date;
-
-                    const hr = document.createElement("hr");
-
-                    newsItem.appendChild(title);
-                    newsItem.appendChild(description);
-                    newsItem.appendChild(pubDate);
-                    newsItem.appendChild(hr);
-
-                    newsContainer.appendChild(newsItem);
-                });
-            };
-
-            socket.onclose = function() {
-                console.log("WebSocket отключен. Попытка переподключения через 2 секунды...");
-                setTimeout(connectWebSocket, 2000);
-            };
-
-            socket.onerror = function(err) {
-                console.error("WebSocket ошибка:", err);
-                socket.close();
-            };
-        }
-
-        window.onload = function() {
-            connectWebSocket();
-        };
-    </script>
+    <title>Dashboard Новостей</title>
 </head>
 <body>
     <h1>Новости</h1>
     <div id="news-container">
         <!-- Новости будут отображаться здесь -->
     </div>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:9742/ws");
+
+        ws.onopen = function() {
+            console.log("Подключено к WebSocket");
+        };
+
+        ws.onmessage = function(event) {
+            const news = JSON.parse(event.data);
+            const container = document.getElementById("news-container");
+            container.innerHTML = ""; // Очистка контейнера
+
+            news.forEach(item => {
+                const newsItem = document.createElement("div");
+                newsItem.className = "news-item";
+
+                const title = document.createElement("h2");
+                const link = document.createElement("a");
+                link.href = item.link;
+                link.target = "_blank";
+                link.textContent = item.title;
+                title.appendChild(link);
+
+                const description = document.createElement("p");
+                description.textContent = item.description;
+
+                const pubDate = document.createElement("small");
+                const date = new Date(item.pub_date);
+                pubDate.textContent = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth()+1).toString().padStart(2, '0')}.${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+                const hr = document.createElement("hr");
+
+                newsItem.appendChild(title);
+                newsItem.appendChild(description);
+                newsItem.appendChild(pubDate);
+                newsItem.appendChild(hr);
+
+                container.appendChild(newsItem);
+            });
+        };
+
+        ws.onclose = function() {
+            console.log("WebSocket отключен");
+        };
+
+        ws.onerror = function(error) {
+            console.log("WebSocket ошибка:", error);
+        };
+    </script>
 </body>
 </html>
