@@ -66,11 +66,13 @@ func main() {
 
     // Запуск периодического обновления данных
     go func() {
+        ticker := time.NewTicker(2 * time.Second) // Установка интервала обновления в 2 секунды
+        defer ticker.Stop()
         for {
+            <-ticker.C
             newsItems, err := parseRSS()
             if err != nil {
                 log.Println("Ошибка при парсинге RSS:", err)
-                time.Sleep(10 * time.Second)
                 continue
             }
             err = updateDatabase(db, newsItems)
@@ -84,8 +86,6 @@ func main() {
             } else {
                 broadcast <- updatedNews
             }
-
-            time.Sleep(10 * time.Second)
         }
     }()
 
@@ -112,9 +112,9 @@ func parseRSS() ([]*NewsItem, error) {
         }
 
         newsItem := &NewsItem{
-            Title:       unidecode.Unidecode(item.Title),
+            Title:       item.Title,
             Link:        item.Link,
-            Description: unidecode.Unidecode(item.Description),
+            Description: item.Description,
             PubDate:     pubDate,
         }
         newsItems = append(newsItems, newsItem)
@@ -124,12 +124,16 @@ func parseRSS() ([]*NewsItem, error) {
 
 func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
     for _, item := range newsItems {
+        // Обработка русских символов
+        title := unidecode.Unidecode(item.Title)
+        description := unidecode.Unidecode(item.Description)
+
         var id int
         err := db.QueryRow("SELECT id FROM iu9Trofimenko WHERE link = ?", item.Link).Scan(&id)
         if err == sql.ErrNoRows {
             // Новость отсутствует, вставляем
             _, err = db.Exec("INSERT INTO iu9Trofimenko (title, link, description, pub_date) VALUES (?, ?, ?, ?)",
-                item.Title, item.Link, item.Description, item.PubDate.Format("2006-01-02 15:04:05"))
+                title, item.Link, description, item.PubDate.Format("2006-01-02 15:04:05"))
             if err != nil {
                 return err
             }
@@ -142,10 +146,10 @@ func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
             if err != nil {
                 return err
             }
-            if dbTitle != item.Title || dbDescription != item.Description {
+            if dbTitle != title || dbDescription != description {
                 // Обновляем запись
                 _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, pub_date = ? WHERE id = ?",
-                    item.Title, item.Description, item.PubDate.Format("2006-01-02 15:04:05"), id)
+                    title, description, item.PubDate.Format("2006-01-02 15:04:05"), id)
                 if err != nil {
                     return err
                 }
