@@ -2,34 +2,40 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard</title>
+    <title>RSS Dashboard</title>
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const ws = new WebSocket("ws://" + window.location.host + "/ws");
-            const container = document.getElementById("news-container");
+        // Подключение к вебсокету
+        var ws = new WebSocket("ws://localhost:9742/ws");
+        ws.onmessage = function(event) {
+            var newsContainer = document.getElementById("news");
+            newsContainer.innerHTML = event.data;
+        };
 
-            ws.onmessage = function(event) {
-                const newsItem = JSON.parse(event.data);
-                const div = document.createElement("div");
-                div.className = "news-item";
-                div.innerHTML = `
-                    <h2><a href="${newsItem.link}" target="_blank">${newsItem.title}</a></h2>
-                    <p>${newsItem.description}</p>
-                    <small>${new Date(newsItem.pub_date).toLocaleString()}</small>
-                    <hr>
-                `;
-                // Добавляем новость в верхнюю часть списка
-                container.prepend(div);
-            };
+        // Обработка ошибок вебсокета
+        ws.onerror = function(error) {
+            console.error("WebSocket Error: ", error);
+        };
 
-            ws.onclose = function() {
-                console.log("WebSocket соединение закрыто");
-            };
-        });
+        // Переподключение при закрытии соединения
+        ws.onclose = function() {
+            console.log("WebSocket соединение закрыто. Попытка переподключения через 5 секунд...");
+            setTimeout(function() {
+                location.reload();
+            }, 5000);
+        };
     </script>
 </head>
 <body>
     <h1>Новости</h1>
-    <div id="news-container"></div>
+    <div id="news">
+        {{range .}}
+            <div class="news-item">
+                <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+                <p>{{.Description}}</p>
+                <small>{{.PubDate}}</small>
+                <hr>
+            </div>
+        {{end}}
+    </div>
 </body>
 </html>
