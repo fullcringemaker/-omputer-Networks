@@ -15,6 +15,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// Структура для хранения данных о новости
 type NewsItem struct {
 	Title       string
 	Link        string
@@ -32,6 +33,7 @@ var (
 
 func main() {
 	var err error
+
 	// Подключение к базе данных MySQL
 	db, err = sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su)/iu9networkslabs")
 	if err != nil {
@@ -103,16 +105,21 @@ func rssUpdater() {
 			title := unidecode.Unidecode(item.Title)
 			link := item.Link
 			description := unidecode.Unidecode(item.Description)
-			pubDate, _ := time.Parse(time.RFC1123Z, item.Published)
+			pubDate, err := time.Parse(time.RFC1123Z, item.Published)
+			if err != nil {
+				log.Println("Ошибка парсинга даты из RSS:", err)
+				continue
+			}
 
-			_, err := db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
+			// Обновляем таблицу
+			_, err = db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
 				VALUES (?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE
 					title = VALUES(title),
 					link = VALUES(link),
 					description = VALUES(description),
 					pub_date = VALUES(pub_date)`,
-				title, link, description, pubDate)
+				title, link, description, pubDate.Format("2006-01-02 15:04:05"))
 			if err != nil {
 				log.Println("Ошибка обновления базы данных:", err)
 			}
@@ -148,9 +155,21 @@ func fetchNewsFromDB() ([]NewsItem, error) {
 	var news []NewsItem
 	for rows.Next() {
 		var item NewsItem
-		if err := rows.Scan(&item.Title, &item.Link, &item.Description, &item.PubDate); err != nil {
+		var pubDateStr string
+
+		// Считываем pub_date как строку
+		if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDateStr); err != nil {
 			return nil, err
 		}
+
+		// Парсим строку pub_date в time.Time
+		pubDate, err := time.Parse("2006-01-02 15:04:05", pubDateStr)
+		if err != nil {
+			item.PubDate = time.Now()
+		} else {
+			item.PubDate = pubDate
+		}
+
 		news = append(news, item)
 	}
 	return news, nil
