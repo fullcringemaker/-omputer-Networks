@@ -1,4 +1,13 @@
-2024/11/08 22:47:44 Ошибка создания таблицы: Error 1170 (42000): BLOB/TEXT column 'link' used in key specification without a key length
-exit status 1
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:19 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:20 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:20 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:20 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:20 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
+2024/11/08 23:14:20 Ошибка получения новостей из БД: sql: Scan error on column index 3, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
 
 После запуска кода возникает следующая ошибка. Исправь код и предсотавь мне переделанный исправленный вариант
