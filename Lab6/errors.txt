@@ -1,3 +1,1 @@
-PS D:\network_testing> go run main.go
-# command-line-arguments
-.\main.go:258:36: cannot use &buf (value of type *string) as io.Writer value in argument to templates.ExecuteTemplate: *string does not implement io.Writer (missing method Write)
+2024/11/08 06:09:12 Ошибка при получении данных из базы: sql: Scan error on column index 4, name "pub_date": unsupported Scan, storing driver.Value type []uint8 into type *time.Time
