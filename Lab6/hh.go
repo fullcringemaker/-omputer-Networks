@@ -13,10 +13,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	"github.com/mmcdole/gofeed"
-	"github.com/rainycape/unidecode"
 )
 
-// NewsItem представляет структуру новости
 type NewsItem struct {
 	Title       string    `json:"Title"`
 	Link        string    `json:"Link"`
@@ -24,7 +22,6 @@ type NewsItem struct {
 	PubDate     time.Time `json:"PubDate"`
 }
 
-// WebSocketHub управляет подключениями WebSocket
 type WebSocketHub struct {
 	clients    map[*websocket.Conn]bool
 	broadcast  chan []NewsItem
@@ -77,7 +74,6 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// fetchAllNews извлекает все новости из базы данных
 func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
 	rows, err := db.Query(`SELECT title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC`)
 	if err != nil {
@@ -98,7 +94,6 @@ func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
 	return news, nil
 }
 
-// serveWs обрабатывает WebSocket-соединения
 func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -136,7 +131,6 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// parseAndUpdate выполняет парсинг RSS и обновляет базу данных
 func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	fp := gofeed.NewParser()
 	feed, err := fp.ParseURL("https://ldpr.ru/RSS")
@@ -159,9 +153,9 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	defer stmt.Close()
 
 	for _, item := range feed.Items {
-		title := unidecode.Unidecode(item.Title)
-		link := item.Link // Убираем unidecode для link
-		description := unidecode.Unidecode(item.Description)
+		title := item.Title          // Можно оставить unidecode, если необходимо
+		link := item.Link            // Убираем unidecode для link
+		description := item.Description // Можно оставить unidecode, если необходимо
 		var pubDate time.Time
 		if item.PublishedParsed != nil {
 			pubDate = *item.PublishedParsed
@@ -187,14 +181,12 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	hub.broadcast <- news
 }
 
-// countNews возвращает количество новостей в таблице
 func countNews(db *sql.DB) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
 	return count, err
 }
 
-// monitorDatabase отслеживает изменения в базе данных и обновляет дэшборд
 func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, timerDuration time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -296,11 +288,8 @@ func main() {
 		}
 	}()
 
-	// Минимизация задержки при запуске для уменьшения времени появления брандмауэра
-	// Запуск серверов сначала, затем парсинг
-
-	// Первоначальный запуск парсинга
-	parseAndUpdate(db, hub)
+	// Первоначальный запуск парсинга в отдельной горутине для минимизации задержки
+	go parseAndUpdate(db, hub)
 
 	// Запуск мониторинга базы данных каждые 2 секунды с таймером восстановления в 1 минуту
 	go monitorDatabase(db, hub, 2*time.Second, 1*time.Minute)
