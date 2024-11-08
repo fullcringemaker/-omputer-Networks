@@ -187,14 +187,12 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	hub.broadcast <- news
 }
 
-// countNews возвращает количество новостей в таблице
 func countNews(db *sql.DB) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
 	return count, err
 }
 
-// monitorDatabase отслеживает изменения в базе данных и обновляет дэшборд
 func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, timerDuration time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -318,5 +316,3 @@ func main() {
 	// Ожидание завершения (необходимо для того, чтобы main не завершился)
 	select {}
 }
-
-Для кода, который я указал, добработай то, что при запуске кода, при первом вненсении данных в таблицу, парсится не 100 новостей, а появляется сразу 200
