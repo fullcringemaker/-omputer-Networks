@@ -1,39 +1,18 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>News Dashboard</title>
+    <title>Новости</title>
 </head>
 <body>
-    <h1>News Dashboard</h1>
-    <div id="news-container">
-        {{template "news" .NewsItems}}
-    </div>
-    <script>
-        // Connect via WebSocket
-        var ws = new WebSocket("ws://" + location.host + "/ws");
-        ws.onmessage = function(event) {
-            var data = JSON.parse(event.data);
-            renderNews(data);
-        };
-
-        function renderNews(newsItems) {
-            var newsContainer = document.getElementById("news-container");
-            var html = '';
-            for (var i = 0; i < newsItems.length; i++) {
-                var item = newsItems[i];
-                html += '<div class="news-item">';
-                html += '<h2><a href="' + item.Link + '" target="_blank">' + item.Title + '</a></h2>';
-                html += '<p>' + item.Description + '</p>';
-                var date = new Date(item.Date);
-                var day = ("0" + date.getDate()).slice(-2);
-                var month = ("0" + (date.getMonth() + 1)).slice(-2);
-                var year = date.getFullYear();
-                html += '<small>' + day + '.' + month + '.' + year + '</small>';
-                html += '<hr></div>';
-            }
-            newsContainer.innerHTML = html;
-        }
-    </script>
+    <h1>Последние новости</h1>
+    {{range .}}
+        <div>
+            <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
+            <p>{{.Description}}</p>
+            <small>{{.Date.Format "02.01.2006 15:04"}}</small>
+            <hr>
+        </div>
+    {{end}}
 </body>
 </html>
