@@ -38,11 +38,12 @@ var (
 )
 
 type NewsItem struct {
-	ID          int
-	Title       string
-	Description string
-	Date        string
-	Link        string
+	ID      int
+	Title   string
+	Content string
+	Author  string
+	Date    string
+	Link    string
 }
 
 func main() {
@@ -93,27 +94,41 @@ func updateDatabase(db *sql.DB, items []*gofeed.Item) error {
 		}
 
 		title := unidecode.Unidecode(item.Title)
-		description := unidecode.Unidecode(item.Description)
-		date := time.Now().Format("2006-01-02")
+		content := unidecode.Unidecode(item.Content)
+		if content == "" && item.Extensions != nil {
+			if encodedContent, ok := item.Extensions["content"]["encoded"]; ok {
+				if len(encodedContent) > 0 {
+					content = unidecode.Unidecode(encodedContent[0].Value)
+				}
+			}
+		}
+		author := ""
+		if item.Author != nil {
+			author = unidecode.Unidecode(item.Author.Name)
+		}
+		date := ""
 		if item.PublishedParsed != nil {
-			date = item.PublishedParsed.Format("2006-01-02")
+			date = item.PublishedParsed.Format("02.01.2006")
+		} else {
+			date = time.Now().Format("02.01.2006")
 		}
 
 		if !exists {
-			_, err = db.Exec("INSERT INTO "+dbTable+" (title, description, date, link) VALUES (?, ?, ?, ?)",
-				title, description, date, item.Link)
+			_, err = db.Exec("INSERT INTO "+dbTable+" (title, content, author, date, link) VALUES (?, ?, ?, ?, ?)",
+				title, content, author, date, item.Link)
 			if err != nil {
 				return err
 			}
 		} else {
-			var existingTitle, existingDescription string
-			err = db.QueryRow("SELECT title, description FROM "+dbTable+" WHERE link=?", item.Link).Scan(&existingTitle, &existingDescription)
+			var existingTitle, existingContent, existingAuthor, existingDate string
+			err = db.QueryRow("SELECT title, content, author, date FROM "+dbTable+" WHERE link=?", item.Link).
+				Scan(&existingTitle, &existingContent, &existingAuthor, &existingDate)
 			if err != nil {
 				return err
 			}
-			if existingTitle != title || existingDescription != description {
-				_, err = db.Exec("UPDATE "+dbTable+" SET title=?, description=?, date=? WHERE link=?",
-					title, description, date, item.Link)
+			if existingTitle != title || existingContent != content || existingAuthor != author || existingDate != date {
+				_, err = db.Exec("UPDATE "+dbTable+" SET title=?, content=?, author=?, date=? WHERE link=?",
+					title, content, author, date, item.Link)
 				if err != nil {
 					return err
 				}
@@ -143,7 +158,7 @@ func dashboardHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func getNewsItems(db *sql.DB) ([]NewsItem, error) {
-	rows, err := db.Query("SELECT id, title, description, date, link FROM " + dbTable + " ORDER BY date DESC")
+	rows, err := db.Query("SELECT id, title, content, author, date, link FROM " + dbTable + " ORDER BY date DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +167,7 @@ func getNewsItems(db *sql.DB) ([]NewsItem, error) {
 	var newsItems []NewsItem
 	for rows.Next() {
 		var item NewsItem
-		err := rows.Scan(&item.ID, &item.Title, &item.Description, &item.Date, &item.Link)
+		err := rows.Scan(&item.ID, &item.Title, &item.Content, &item.Author, &item.Date, &item.Link)
 		if err != nil {
 			return nil, err
 		}
