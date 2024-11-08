@@ -12,6 +12,7 @@ import (
     _ "github.com/go-sql-driver/mysql"
     "github.com/gorilla/websocket"
     "github.com/mmcdole/gofeed"
+    "github.com/rainycape/unidecode"
 )
 
 var (
@@ -101,8 +102,9 @@ func updateNews() {
 
     // Вставка или обновление новостей
     for _, item := range feed.Items {
-        title := item.Title
-        description := item.Description
+        // Используем unidecode для корректного отображения русских букв
+        title := unidecode.Unidecode(item.Title)
+        description := unidecode.Unidecode(item.Description)
         link := item.Link
         pubDate := item.PublishedParsed
 
