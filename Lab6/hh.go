@@ -145,16 +145,9 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
         return
     }
 
-    // Ограничение до первых 100 новостей
-    maxItems := 100
-    if len(feed.Items) < maxItems {
-        maxItems = len(feed.Items)
-    }
-
-    for i := 0; i < maxItems; i++ {
-        item := feed.Items[i]
+    for _, item := range feed.Items {
         title := unidecode.Unidecode(item.Title)
-        link := item.Link // Не применяем unidecode к ссылке
+        link := unidecode.Unidecode(item.Link)
         description := unidecode.Unidecode(item.Description)
         var pubDate time.Time
         if item.PublishedParsed != nil {
@@ -192,7 +185,8 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
     ticker := time.NewTicker(interval)
     defer ticker.Stop()
 
-    var lastNewsHash string
+    var refillScheduled bool
+    var mu sync.Mutex
 
     for range ticker.C {
         news, err := fetchAllNews(db)
@@ -201,15 +195,42 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration) {
             continue
         }
 
-        // Создание хеша для текущего списка новостей
-        newsJSON, _ := json.Marshal(news)
-        currentHash := fmt.Sprintf("%x", md5.Sum(newsJSON))
-
-        if currentHash != lastNewsHash {
-            lastNewsHash = currentHash
-            hub.broadcast <- news
+        if len(news) == 0 {
+            mu.Lock()
+            if !refillScheduled {
+                refillScheduled = true
+                mu.Unlock()
+                log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
+                go func() {
+                    time.Sleep(1 * time.Minute)
+                    // Проверяем, всё ещё ли таблица пуста перед восстановлением
+                    count, err := countNews(db)
+                    if err != nil {
+                        log.Printf("Ошибка подсчета новостей после задержки: %v", err)
+                        mu.Lock()
+                        refillScheduled = false
+                        mu.Unlock()
+                        return
+                    }
+                    if count == 0 {
+                        parseAndUpdate(db, hub)
+                    }
+                    mu.Lock()
+                    refillScheduled = false
+                    mu.Unlock()
+                }()
+            } else {
+                mu.Unlock()
+            }
         }
     }
+}
+
+// countNews возвращает количество новостей в таблице
+func countNews(db *sql.DB) (int, error) {
+    var count int
+    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
+    return count, err
 }
 
 func main() {
@@ -254,45 +275,11 @@ func main() {
     // Запуск мониторинга базы данных каждые 2 секунды
     go monitorDatabase(db, hub, 2*time.Second)
 
-    // Обработка восстановления таблицы после удаления всех новостей
-    var restorationLock sync.Mutex
-    restorationLock.Unlock() // Разблокировать мьютекс для начального состояния
-
-    go func() {
-        for {
-            time.Sleep(30 * time.Second)
-            count, err := countNews(db)
-            if err != nil {
-                log.Printf("Ошибка подсчета новостей: %v", err)
-                continue
-            }
-            if count == 0 {
-                restorationLock.Lock()
-                // Проверяем, не запущен ли уже процесс восстановления
-                go func() {
-                    log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
-                    time.Sleep(1 * time.Minute)
-                    // Проверяем, всё ещё ли таблица пуста
-                    countAfterDelay, err := countNews(db)
-                    if err != nil {
-                        log.Printf("Ошибка подсчета новостей после задержки: %v", err)
-                        restorationLock.Unlock()
-                        return
-                    }
-                    if countAfterDelay == 0 {
-                        parseAndUpdate(db, hub)
-                    }
-                    restorationLock.Unlock()
-                }()
-            }
-        }
-    }()
-
-    // Настройка HTTP-сервера с тайм-аутами для уменьшения задержки запуска
+    // Запуск веб-сервера с уменьшенными тайм-аутами для снижения задержки
     server := &http.Server{
         Addr:         ":9742",
         ReadTimeout:  5 * time.Second,
-        WriteTimeout: 10 * time.Second,
+        WriteTimeout: 5 * time.Second,
         IdleTimeout:  15 * time.Second,
     }
 
@@ -300,11 +287,4 @@ func main() {
     if err := server.ListenAndServe(); err != nil {
         log.Fatalf("Ошибка запуска сервера: %v", err)
     }
-}
-
-// countNews возвращает количество новостей в таблице
-func countNews(db *sql.DB) (int, error) {
-    var count int
-    err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
-    return count, err
 }
