@@ -1,39 +1,58 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>News Dashboard</title>
+    <title>Новости Dashboard</title>
 </head>
 <body>
-    <h1>News Dashboard</h1>
+    <h1>Новости</h1>
     <div id="news-container">
-        {{template "news" .NewsItems}}
+        <!-- Новости будут отображаться здесь -->
     </div>
+
     <script>
-        // Connect via WebSocket
-        var ws = new WebSocket("ws://" + location.host + "/ws");
+        const ws = new WebSocket("ws://localhost:9742/ws");
+        const newsContainer = document.getElementById("news-container");
+
         ws.onmessage = function(event) {
-            var data = JSON.parse(event.data);
-            renderNews(data);
+            const news = JSON.parse(event.data);
+            const newsItem = document.createElement("div");
+            newsItem.className = "news-item";
+            newsItem.innerHTML = `
+                <h2><a href="${news.link}" target="_blank">${news.title}</a></h2>
+                <p>${news.description}</p>
+                <small>${news.pub_date}</small>
+                <hr>
+            `;
+            // Добавляем новость в начало списка
+            newsContainer.prepend(newsItem);
         };
 
-        function renderNews(newsItems) {
-            var newsContainer = document.getElementById("news-container");
-            var html = '';
-            for (var i = 0; i < newsItems.length; i++) {
-                var item = newsItems[i];
-                html += '<div class="news-item">';
-                html += '<h2><a href="' + item.Link + '" target="_blank">' + item.Title + '</a></h2>';
-                html += '<p>' + item.Description + '</p>';
-                var date = new Date(item.Date);
-                var day = ("0" + date.getDate()).slice(-2);
-                var month = ("0" + (date.getMonth() + 1)).slice(-2);
-                var year = date.getFullYear();
-                html += '<small>' + day + '.' + month + '.' + year + '</small>';
-                html += '<hr></div>';
-            }
-            newsContainer.innerHTML = html;
+        // Функция для загрузки существующих новостей при загрузке страницы
+        function loadExistingNews() {
+            fetch('/existing-news')
+                .then(response => response.json())
+                .then(data => {
+                    data.forEach(news => {
+                        const newsItem = document.createElement("div");
+                        newsItem.className = "news-item";
+                        newsItem.innerHTML = `
+                            <h2><a href="${news.link}" target="_blank">${news.title}</a></h2>
+                            <p>${news.description}</p>
+                            <small>${news.pub_date}</small>
+                            <hr>
+                        `;
+                        newsContainer.appendChild(newsItem);
+                    });
+                })
+                .catch(error => console.error('Ошибка загрузки существующих новостей:', error));
         }
+
+        // Загрузка существующих новостей при старте
+        loadExistingNews();
+
+        // Обновление каждые 2 секунды
+        setInterval(loadExistingNews, 2000);
     </script>
 </body>
 </html>
