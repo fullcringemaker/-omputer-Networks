@@ -33,6 +33,7 @@ var (
     mu          sync.Mutex
 )
 
+// Константы конфигурации
 const (
     rssURL       = "https://ldpr.ru/rss"
     dbUser       = "iu9networkslabs"
@@ -105,7 +106,7 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 // upgrader используется для обновления HTTP-соединения до WebSocket
 var upgrader = websocket.Upgrader{
     CheckOrigin: func(r *http.Request) bool {
-        return true
+        return true // В продакшене рекомендуется более строгая проверка
     },
 }
 
@@ -113,20 +114,23 @@ var upgrader = websocket.Upgrader{
 func handleConnections(w http.ResponseWriter, r *http.Request) {
     ws, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
-        log.Printf("Ошибка подключения вебсокета: %v", err)
+        log.Printf("Ошибка подключения WebSocket: %v", err)
         return
     }
     defer ws.Close()
 
+    // Добавляем клиента
     mu.Lock()
     clients[ws] = true
     mu.Unlock()
 
+    log.Println("Новый клиент подключился.")
+
+    // Чтение сообщений от клиента (необходимо для обнаружения закрытия)
     for {
-        // Читаем сообщения от клиента (не используем, но нужно для поддержания соединения)
         _, _, err := ws.ReadMessage()
         if err != nil {
-            log.Printf("Ошибка чтения сообщения: %v", err)
+            log.Printf("Ошибка чтения сообщения от клиента: %v", err)
             mu.Lock()
             delete(clients, ws)
             mu.Unlock()
