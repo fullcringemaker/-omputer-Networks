@@ -2,236 +2,258 @@ package main
 
 import (
     "database/sql"
+    "encoding/json"
     "fmt"
-    "html/template"
     "log"
     "net/http"
     "sync"
     "time"
 
     "github.com/gorilla/websocket"
-    _ "github.com/go-sql-driver/mysql"
     "github.com/mmcdole/gofeed"
     "github.com/rainycape/unidecode"
+    _ "github.com/go-sql-driver/mysql"
 )
 
+// NewsItem представляет структуру новости
 type NewsItem struct {
-    ID          int
-    Title       string
-    Link        string
-    Description string
-    PubDate     time.Time
+    Title       string    `json:"Title"`
+    Link        string    `json:"Link"`
+    Description string    `json:"Description"`
+    PubDate     time.Time `json:"PubDate"`
 }
 
-var (
-    clients   = make(map[*websocket.Conn]bool)
-    broadcast = make(chan []*NewsItem)
-    upgrader  = websocket.Upgrader{}
-    mutex     = &sync.Mutex{}
-)
+// WebSocketHub управляет подключениями WebSocket
+type WebSocketHub struct {
+    clients    map[*websocket.Conn]bool
+    broadcast  chan []NewsItem
+    register   chan *websocket.Conn
+    unregister chan *websocket.Conn
+    mu         sync.Mutex
+}
+
+func newHub() *WebSocketHub {
+    return &WebSocketHub{
+        clients:    make(map[*websocket.Conn]bool),
+        broadcast:  make(chan []NewsItem),
+        register:   make(chan *websocket.Conn),
+        unregister: make(chan *websocket.Conn),
+    }
+}
+
+func (h *WebSocketHub) run() {
+    for {
+        select {
+        case conn := <-h.register:
+            h.mu.Lock()
+            h.clients[conn] = true
+            h.mu.Unlock()
+        case conn := <-h.unregister:
+            h.mu.Lock()
+            if _, ok := h.clients[conn]; ok {
+                delete(h.clients, conn)
+                conn.Close()
+            }
+            h.mu.Unlock()
+        case news := <-h.broadcast:
+            h.mu.Lock()
+            data, err := json.Marshal(news)
+            if err != nil {
+                log.Printf("Ошибка маршалинга новостей: %v", err)
+                h.mu.Unlock()
+                continue
+            }
+            for conn := range h.clients {
+                err := conn.WriteMessage(websocket.TextMessage, data)
+                if err != nil {
+                    log.Printf("Ошибка отправки сообщения: %v", err)
+                    conn.Close()
+                    delete(h.clients, conn)
+                }
+            }
+            h.mu.Unlock()
+        }
+    }
+}
+
+var upgrader = websocket.Upgrader{
+    CheckOrigin: func(r *http.Request) bool {
+        return true
+    },
+}
+
+func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        conn, err := upgrader.Upgrade(w, r, nil)
+        if err != nil {
+            log.Printf("Ошибка апгрейда WebSocket: %v", err)
+            return
+        }
+        hub.register <- conn
+
+        // Отправить текущие новости при подключении
+        news, err := fetchAllNews(db)
+        if err != nil {
+            log.Printf("Ошибка получения новостей: %v", err)
+        } else {
+            hub.broadcast <- news
+        }
+
+        // Чтение сообщений не требуется, поэтому просто слушаем закрытие соединения
+        go func() {
+            defer func() {
+                hub.unregister <- conn
+            }()
+            for {
+                _, _, err := conn.ReadMessage()
+                if err != nil {
+                    break
+                }
+            }
+        }()
+    }
+}
 
 func main() {
     // Подключение к базе данных
-    db, err := sql.Open("mysql", "iu9networkslabs:Je2dTYr6@tcp(students.yss.su)/iu9networkslabs?charset=utf8")
+    dsn := "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs?charset=utf8mb4&parseTime=True&loc=Local"
+    db, err := sql.Open("mysql", dsn)
     if err != nil {
-        log.Fatal("Ошибка при подключении к базе данных:", err)
+        log.Fatalf("Не удалось подключиться к базе данных: %v", err)
     }
     defer db.Close()
 
-    // Установка кодировки для корректного отображения русских символов
-    db.SetConnMaxLifetime(time.Minute * 3)
-    db.SetMaxOpenConns(10)
-    db.SetMaxIdleConns(10)
+    // Проверка подключения
+    if err := db.Ping(); err != nil {
+        log.Fatalf("Не удалось проверить подключение к базе данных: %v", err)
+    }
 
-    // Запуск горутины для обработки сообщений WebSocket
-    go handleMessages()
+    hub := newHub()
+    go hub.run()
 
     // Маршруты
-    http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-        handleConnections(w, r, db)
-    })
-    http.HandleFunc("/parser", func(w http.ResponseWriter, r *http.Request) {
-        tmpl := template.Must(template.ParseFiles("parser.html"))
-        newsItems, err := fetchNewsFromDB(db)
-        if err != nil {
-            log.Println("Ошибка при получении данных из базы:", err)
-            http.Error(w, "Внутренняя ошибка сервера", http.StatusInternalServerError)
-            return
-        }
-        tmpl.Execute(w, newsItems)
-    })
-    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    http.HandleFunc("/ws", serveWs(hub, db))
+    http.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
         http.ServeFile(w, r, "dashboard.html")
     })
+    http.HandleFunc("/parser", func(w http.ResponseWriter, r *http.Request) {
+        http.ServeFile(w, r, "parser.html")
+    })
 
-    // Запуск периодического обновления данных
+    // Запуск парсинга и обновления каждые 5 минут
     go func() {
-        ticker := time.NewTicker(2 * time.Second) // Установка интервала обновления в 2 секунды
+        ticker := time.NewTicker(5 * time.Minute)
         defer ticker.Stop()
         for {
+            parseAndUpdate(db, hub)
             <-ticker.C
-            newsItems, err := parseRSS()
+        }
+    }()
+
+    // Первоначальный запуск
+    parseAndUpdate(db, hub)
+
+    // Регулярное опрос базы данных на изменения каждые 2 секунды
+    go func() {
+        var lastHash string
+        for {
+            time.Sleep(2 * time.Second)
+            news, err := fetchAllNews(db)
             if err != nil {
-                log.Println("Ошибка при парсинге RSS:", err)
+                log.Printf("Ошибка получения новостей для опроса: %v", err)
                 continue
             }
-            err = updateDatabase(db, newsItems)
+           	currentHash, err := hashNews(news)
             if err != nil {
-                log.Println("Ошибка при обновлении базы данных:", err)
+                log.Printf("Ошибка хеширования новостей: %v", err)
+                continue
             }
-
-            updatedNews, err := fetchNewsFromDB(db)
-            if err != nil {
-                log.Println("Ошибка при получении данных из базы:", err)
-            } else {
-                broadcast <- updatedNews
+            if currentHash != lastHash {
+                lastHash = currentHash
+                hub.broadcast <- news
             }
         }
     }()
 
-    // Запуск сервера
-    log.Println("Сервер запущен на порту 9742")
-    err = http.ListenAndServe(":9742", nil)
-    if err != nil {
-        log.Fatal("Ошибка при запуске сервера:", err)
+    // Запуск веб-сервера
+    fmt.Println("Сервер запущен на порту 9742")
+    if err := http.ListenAndServe(":9742", nil); err != nil {
+        log.Fatalf("Ошибка запуска сервера: %v", err)
     }
 }
 
-func parseRSS() ([]*NewsItem, error) {
+// parseAndUpdate выполняет парсинг RSS и обновляет базу данных
+func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
     fp := gofeed.NewParser()
-    feed, err := fp.ParseURL("https://ldpr.ru/rss")
+    feed, err := fp.ParseURL("https://ldpr.ru/RSS")
     if err != nil {
-        return nil, err
+        log.Printf("Ошибка парсинга RSS: %v", err)
+        return
     }
 
-    var newsItems []*NewsItem
     for _, item := range feed.Items {
-        pubDate, err := time.Parse(time.RFC1123Z, item.Published)
-        if err != nil {
+        title := unidecode.Unidecode(item.Title)
+        link := unidecode.Unidecode(item.Link)
+        description := unidecode.Unidecode(item.Description)
+        var pubDate time.Time
+        if item.PublishedParsed != nil {
+            pubDate = *item.PublishedParsed
+        } else {
             pubDate = time.Now()
         }
 
-        newsItem := &NewsItem{
-            Title:       item.Title,
-            Link:        item.Link,
-            Description: item.Description,
-            PubDate:     pubDate,
-        }
-        newsItems = append(newsItems, newsItem)
-    }
-    return newsItems, nil
-}
-
-func updateDatabase(db *sql.DB, newsItems []*NewsItem) error {
-    for _, item := range newsItems {
-        // Обработка русских символов
-        title := unidecode.Unidecode(item.Title)
-        description := unidecode.Unidecode(item.Description)
-
-        var id int
-        err := db.QueryRow("SELECT id FROM iu9Trofimenko WHERE link = ?", item.Link).Scan(&id)
-        if err == sql.ErrNoRows {
-            // Новость отсутствует, вставляем
-            _, err = db.Exec("INSERT INTO iu9Trofimenko (title, link, description, pub_date) VALUES (?, ?, ?, ?)",
-                title, item.Link, description, item.PubDate.Format("2006-01-02 15:04:05"))
-            if err != nil {
-                return err
-            }
-        } else if err != nil {
-            return err
-        } else {
-            // Проверяем на изменения
-            var dbTitle, dbDescription string
-            err := db.QueryRow("SELECT title, description FROM iu9Trofimenko WHERE id = ?", id).Scan(&dbTitle, &dbDescription)
-            if err != nil {
-                return err
-            }
-            if dbTitle != title || dbDescription != description {
-                // Обновляем запись
-                _, err = db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, pub_date = ? WHERE id = ?",
-                    title, description, item.PubDate.Format("2006-01-02 15:04:05"), id)
-                if err != nil {
-                    return err
-                }
-            }
+        // Вставка с обновлением при дубликате
+        _, err := db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                link = VALUES(link),
+                description = VALUES(description),
+                pub_date = VALUES(pub_date)`,
+            title, link, description, pubDate)
+        if err != nil {
+            log.Printf("Ошибка вставки новости: %v", err)
         }
     }
-    return nil
+
+    // Получение обновленного списка новостей
+    news, err := fetchAllNews(db)
+    if err != nil {
+        log.Printf("Ошибка получения новостей: %v", err)
+        return
+    }
+
+    // Отправка обновлений через WebSocket
+    hub.broadcast <- news
 }
 
-func fetchNewsFromDB(db *sql.DB) ([]*NewsItem, error) {
-    rows, err := db.Query("SELECT id, title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC")
+// fetchAllNews извлекает все новости из базы данных
+func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
+    rows, err := db.Query(`SELECT title, link, description, pub_date FROM iu9Trofimenko ORDER BY pub_date DESC`)
     if err != nil {
         return nil, err
     }
     defer rows.Close()
 
-    var newsItems []*NewsItem
+    var news []NewsItem
     for rows.Next() {
         var item NewsItem
-        var pubDateStr string
-        err := rows.Scan(&item.ID, &item.Title, &item.Link, &item.Description, &pubDateStr)
-        if err != nil {
+        var pubDate time.Time
+        if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDate); err != nil {
             return nil, err
         }
-        pubDate, err := time.Parse("2006-01-02 15:04:05", pubDateStr)
-        if err != nil {
-            pubDate = time.Now()
-        }
         item.PubDate = pubDate
-        newsItems = append(newsItems, &item)
+        news = append(news, item)
     }
-    return newsItems, nil
+    return news, nil
 }
 
-func handleConnections(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-    upgrader.CheckOrigin = func(r *http.Request) bool { return true }
-    ws, err := upgrader.Upgrade(w, r, nil)
+// hashNews создает хеш для списка новостей для сравнения изменений
+func hashNews(news []NewsItem) (string, error) {
+    data, err := json.Marshal(news)
     if err != nil {
-        log.Println("Ошибка при обновлении до WebSocket:", err)
-        return
+        return "", err
     }
-    defer ws.Close()
-
-    mutex.Lock()
-    clients[ws] = true
-    mutex.Unlock()
-
-    // Отправляем текущие данные новостей новому клиенту
-    newsItems, err := fetchNewsFromDB(db)
-    if err != nil {
-        log.Println("Ошибка при получении данных из базы:", err)
-    } else {
-        err = ws.WriteJSON(newsItems)
-        if err != nil {
-            log.Println("Ошибка при отправке данных через WebSocket:", err)
-        }
-    }
-
-    for {
-        // Ожидаем сообщений от клиента (не используем, но нужно для поддержки соединения)
-        _, _, err := ws.ReadMessage()
-        if err != nil {
-            mutex.Lock()
-            delete(clients, ws)
-            mutex.Unlock()
-            break
-        }
-    }
-}
-
-func handleMessages() {
-    for {
-        newsItems := <-broadcast
-        mutex.Lock()
-        for client := range clients {
-            err := client.WriteJSON(newsItems)
-            if err != nil {
-                log.Println("Ошибка при отправке данных через WebSocket:", err)
-                client.Close()
-                delete(clients, client)
-            }
-        }
-        mutex.Unlock()
-    }
+    // Используем простой хеш, например, длину строки JSON
+    return fmt.Sprintf("%d", len(data)), nil
 }
