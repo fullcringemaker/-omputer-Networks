@@ -2,34 +2,58 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Новости</title>
-    <script>
-        var ws = new WebSocket("ws://" + window.location.host + "/ws");
-        ws.onmessage = function(event) {
-            var newsItems = JSON.parse(event.data);
-            var content = "";
-            newsItems.forEach(function(item) {
-                content += `
-                    <div class="news-item">
-                        <h2><a href="${item.Link}" target="_blank">${item.Title}</a></h2>
-                        <p>${item.Description}</p>
-                        <small>${new Date(item.PubDate).toLocaleString('ru-RU')}</small>
-                        <hr>
-                    </div>
-                `;
-            });
-            document.getElementById("content").innerHTML = content;
-        };
-        ws.onclose = function() {
-            console.log("Соединение закрыто, повторная попытка...");
-            setTimeout(function() {
-                location.reload();
-            }, 5000);
-        };
-    </script>
+    <title>Новости Dashboard</title>
 </head>
 <body>
     <h1>Новости</h1>
-    <div id="content"></div>
+    <div id="news-container">
+        <!-- Новости будут вставляться сюда -->
+    </div>
+
+    <script>
+        const ws = new WebSocket("ws://" + window.location.hostname + ":9742/ws");
+
+        ws.onopen = function() {
+            console.log("WebSocket подключен");
+        };
+
+        ws.onmessage = function(event) {
+            const news = JSON.parse(event.data);
+            const container = document.getElementById("news-container");
+            container.innerHTML = ""; // Очистка текущих новостей
+            news.forEach(item => {
+                const newsItem = document.createElement("div");
+                newsItem.className = "news-item";
+
+                const title = document.createElement("h2");
+                const link = document.createElement("a");
+                link.href = item.Link;
+                link.target = "_blank";
+                link.textContent = item.Title;
+                title.appendChild(link);
+
+                const description = document.createElement("p");
+                description.textContent = item.Description;
+
+                const pubDate = document.createElement("small");
+                const date = new Date(item.PubDate);
+                const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
+                pubDate.textContent = date.toLocaleDateString("ru-RU", options);
+
+                const hr = document.createElement("hr");
+
+                newsItem.appendChild(title);
+                newsItem.appendChild(description);
+                newsItem.appendChild(pubDate);
+                newsItem.appendChild(hr);
+
+                container.appendChild(newsItem);
+            });
+        };
+
+        ws.onclose = function() {
+            console.log("WebSocket отключен");
+        };
+    </script>
 </body>
 </html>
