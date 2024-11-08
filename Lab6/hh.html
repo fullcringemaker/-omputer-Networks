@@ -3,39 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <title>RSS Dashboard</title>
-    <script>
-        // Подключение к вебсокету
-        var ws = new WebSocket("ws://localhost:9742/ws");
-        ws.onmessage = function(event) {
-            var newsContainer = document.getElementById("news");
-            newsContainer.innerHTML = event.data;
-        };
-
-        // Обработка ошибок вебсокета
-        ws.onerror = function(error) {
-            console.error("WebSocket Error: ", error);
-        };
-
-        // Переподключение при закрытии соединения
-        ws.onclose = function() {
-            console.log("WebSocket соединение закрыто. Попытка переподключения через 5 секунд...");
-            setTimeout(function() {
-                location.reload();
-            }, 5000);
-        };
-    </script>
 </head>
 <body>
-    <h1>Новости</h1>
-    <div id="news">
-        {{range .}}
-            <div class="news-item">
-                <h2><a href="{{.Link}}" target="_blank">{{.Title}}</a></h2>
-                <p>{{.Description}}</p>
-                <small>{{.PubDate}}</small>
-                <hr>
-            </div>
-        {{end}}
-    </div>
+    <div id="news-container"></div>
+    <script>
+        const ws = new WebSocket("ws://localhost:9742/ws");
+        ws.onmessage = function(event) {
+            document.getElementById("news-container").innerHTML = event.data;
+        };
+    </script>
 </body>
 </html>
