@@ -5,39 +5,43 @@
     <title>Новости</title>
 </head>
 <body>
-    <h1>Последние новости</h1>
-    <div id="news-container"></div>
+    <div id="news-container">
+        {{template "parser.html" .}}
+    </div>
 
     <script>
-        var newsContainer = document.getElementById('news-container');
-        var socket = new WebSocket("ws://localhost:9742/ws");
+        var ws = new WebSocket("ws://" + location.host + "/ws");
 
-        socket.onmessage = function(event) {
+        ws.onmessage = function(event) {
             var newsItems = JSON.parse(event.data);
-            newsContainer.innerHTML = '';
-            newsItems.forEach(function(item) {
-                var newsDiv = document.createElement('div');
-                var title = document.createElement('h2');
-                var link = document.createElement('a');
-                link.href = item.Link;
-                link.target = '_blank';
-                link.textContent = item.Title;
-                title.appendChild(link);
-                var description = document.createElement('p');
-                description.textContent = item.Description;
-                var date = document.createElement('small');
-                var dateObj = new Date(item.Date);
-                date.textContent = dateObj.toLocaleString('ru-RU');
-                newsDiv.appendChild(title);
-                newsDiv.appendChild(description);
-                newsDiv.appendChild(date);
-                newsDiv.appendChild(document.createElement('hr'));
-                newsContainer.appendChild(newsDiv);
-            });
-        };
+            var container = document.getElementById("news-container");
+            container.innerHTML = "";
 
-        socket.onerror = function(error) {
-            console.log('WebSocket Error: ' + error);
+            newsItems.forEach(function(item) {
+                var div = document.createElement("div");
+                div.className = "news-item";
+
+                var title = document.createElement("h2");
+                var titleLink = document.createElement("a");
+                titleLink.href = item.Link;
+                titleLink.target = "_blank";
+                titleLink.textContent = item.Title;
+                title.appendChild(titleLink);
+                div.appendChild(title);
+
+                var description = document.createElement("p");
+                description.textContent = item.Description;
+                div.appendChild(description);
+
+                var date = document.createElement("small");
+                date.textContent = item.Date;
+                div.appendChild(date);
+
+                var hr = document.createElement("hr");
+                div.appendChild(hr);
+
+                container.appendChild(div);
+            });
         };
     </script>
 </body>
