@@ -15,7 +15,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// Структура для хранения данных о новости
 type NewsItem struct {
 	Title       string
 	Link        string
@@ -67,30 +66,34 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Устанавливаем интервал обновления
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		news, err := fetchNewsFromDB()
-		if err != nil {
-			log.Println("Ошибка получения новостей из БД:", err)
-			continue
-		}
+		select {
+		case <-ticker.C:
+			news, err := fetchNewsFromDB()
+			if err != nil {
+				log.Println("Ошибка получения новостей из БД:", err)
+				return
+			}
 
-		var htmlContent string
-		htmlContent, err = renderHTML(news)
-		if err != nil {
-			log.Println("Ошибка рендеринга HTML:", err)
-			continue
-		}
+			htmlContent, err := renderHTML(news)
+			if err != nil {
+				log.Println("Ошибка рендеринга HTML:", err)
+				return
+			}
 
-		if err = conn.WriteMessage(websocket.TextMessage, []byte(htmlContent)); err != nil {
-			log.Println("Ошибка отправки сообщения по WebSocket:", err)
-			return
+			err = conn.WriteMessage(websocket.TextMessage, []byte(htmlContent))
+			if err != nil {
+				log.Println("Ошибка отправки сообщения по WebSocket:", err)
+				return
+			}
 		}
-
-		time.Sleep(time.Second * 5)
 	}
 }
 
-// Синтаксический анализ RSS и обновление базы данных
 func rssUpdater() {
 	for {
 		fp := gofeed.NewParser()
@@ -111,7 +114,6 @@ func rssUpdater() {
 				continue
 			}
 
-			// Обновляем таблицу
 			_, err = db.Exec(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
 				VALUES (?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE
@@ -125,7 +127,6 @@ func rssUpdater() {
 			}
 		}
 
-		// Проверка на пустую таблицу и задержка 1 минута
 		checkAndRestoreNews()
 		time.Sleep(updateDelay)
 	}
@@ -157,12 +158,10 @@ func fetchNewsFromDB() ([]NewsItem, error) {
 		var item NewsItem
 		var pubDateStr string
 
-		// Считываем pub_date как строку
 		if err := rows.Scan(&item.Title, &item.Link, &item.Description, &pubDateStr); err != nil {
 			return nil, err
 		}
 
-		// Парсим строку pub_date в time.Time
 		pubDate, err := time.Parse("2006-01-02 15:04:05", pubDateStr)
 		if err != nil {
 			item.PubDate = time.Now()
