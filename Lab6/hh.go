@@ -268,8 +268,10 @@ func getNewsItemByLink(link string) (NewsItem, error) {
 }
 
 func insertNewsItem(rssItem *gofeed.Item) error {
-	date := rssItem.PublishedParsed
-	if date == nil {
+	var date time.Time
+	if rssItem.PublishedParsed != nil {
+		date = *rssItem.PublishedParsed
+	} else {
 		date = time.Now()
 	}
 	_, err := db.Exec("INSERT INTO iu9Trofimenko (title, description, date, link) VALUES (?, ?, ?, ?)", rssItem.Title, rssItem.Description, date.Format("2006-01-02 15:04:05"), rssItem.Link)
@@ -277,8 +279,10 @@ func insertNewsItem(rssItem *gofeed.Item) error {
 }
 
 func updateNewsItem(id int, rssItem *gofeed.Item) error {
-	date := rssItem.PublishedParsed
-	if date == nil {
+	var date time.Time
+	if rssItem.PublishedParsed != nil {
+		date = *rssItem.PublishedParsed
+	} else {
 		date = time.Now()
 	}
 	_, err := db.Exec("UPDATE iu9Trofimenko SET title = ?, description = ?, date = ?, link = ? WHERE id = ?", rssItem.Title, rssItem.Description, date.Format("2006-01-02 15:04:05"), rssItem.Link, id)
