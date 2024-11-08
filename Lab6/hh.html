@@ -2,61 +2,33 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard Новостей</title>
+    <title>Dashboard</title>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const ws = new WebSocket("ws://" + window.location.host + "/ws");
+            const container = document.getElementById("news-container");
+
+            ws.onmessage = function(event) {
+                const newsItem = JSON.parse(event.data);
+                const div = document.createElement("div");
+                div.className = "news-item";
+                div.innerHTML = `
+                    <h2><a href="${newsItem.link}" target="_blank">${newsItem.title}</a></h2>
+                    <p>${newsItem.description}</p>
+                    <small>${new Date(newsItem.pub_date).toLocaleString()}</small>
+                    <hr>
+                `;
+                container.prepend(div);
+            };
+
+            ws.onclose = function() {
+                console.log("WebSocket соединение закрыто");
+            };
+        });
+    </script>
 </head>
 <body>
     <h1>Новости</h1>
-    <div id="news-container">
-        <!-- Новости будут отображаться здесь -->
-    </div>
-
-    <script>
-        const ws = new WebSocket("ws://localhost:9742/ws");
-
-        ws.onopen = function() {
-            console.log("Подключено к WebSocket");
-        };
-
-        ws.onmessage = function(event) {
-            const news = JSON.parse(event.data);
-            const container = document.getElementById("news-container");
-            container.innerHTML = ""; // Очистка контейнера
-
-            news.forEach(item => {
-                const newsItem = document.createElement("div");
-                newsItem.className = "news-item";
-
-                const title = document.createElement("h2");
-                const link = document.createElement("a");
-                link.href = item.link;
-                link.target = "_blank";
-                link.textContent = item.title || "Без заголовка";
-                title.appendChild(link);
-
-                const description = document.createElement("p");
-                description.textContent = item.description || "Без описания";
-
-                const pubDate = document.createElement("small");
-                pubDate.textContent = item.pub_date || "Неизвестная дата";
-
-                const hr = document.createElement("hr");
-
-                newsItem.appendChild(title);
-                newsItem.appendChild(description);
-                newsItem.appendChild(pubDate);
-                newsItem.appendChild(hr);
-
-                container.appendChild(newsItem);
-            });
-        };
-
-        ws.onclose = function() {
-            console.log("WebSocket отключен");
-        };
-
-        ws.onerror = function(error) {
-            console.log("WebSocket ошибка:", error);
-        };
-    </script>
+    <div id="news-container"></div>
 </body>
 </html>
