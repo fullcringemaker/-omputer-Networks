@@ -145,10 +145,16 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
         return
     }
 
-    for _, item := range feed.Items {
+    // Ограничение до первых 100 новостей
+    maxItems := 100
+    if len(feed.Items) < maxItems {
+        maxItems = len(feed.Items)
+    }
+
+    for i := 0; i < maxItems; i++ {
+        item := feed.Items[i]
         title := unidecode.Unidecode(item.Title)
-        // Не применяем unidecode к ссылке, чтобы сохранить её уникальность
-        link := item.Link
+        link := item.Link // Не применяем unidecode к ссылке
         description := unidecode.Unidecode(item.Description)
         var pubDate time.Time
         if item.PublishedParsed != nil {
@@ -245,14 +251,13 @@ func main() {
     // Первоначальный запуск
     parseAndUpdate(db, hub)
 
-    // Флаг для предотвращения многократного восстановления
-    var restoreMutex sync.Mutex
-    restorationScheduled := false
-
     // Запуск мониторинга базы данных каждые 2 секунды
     go monitorDatabase(db, hub, 2*time.Second)
 
-    // Проверка на пустую таблицу и восстановление через 1 минуту
+    // Обработка восстановления таблицы после удаления всех новостей
+    var restorationLock sync.Mutex
+    restorationLock.Unlock() // Разблокировать мьютекс для начального состояния
+
     go func() {
         for {
             time.Sleep(30 * time.Second)
@@ -262,47 +267,37 @@ func main() {
                 continue
             }
             if count == 0 {
-                restoreMutex.Lock()
-                if !restorationScheduled {
-                    restorationScheduled = true
-                    restoreMutex.Unlock()
+                restorationLock.Lock()
+                // Проверяем, не запущен ли уже процесс восстановления
+                go func() {
                     log.Println("Таблица пуста. Восстановление новостей через 1 минуту...")
-                    go func() {
-                        time.Sleep(1 * time.Minute)
-                        // Проверяем, всё ещё ли таблица пуста
-                        countAfterDelay, err := countNews(db)
-                        if err != nil {
-                            log.Printf("Ошибка подсчета новостей после задержки: %v", err)
-                            restoreMutex.Lock()
-                            restorationScheduled = false
-                            restoreMutex.Unlock()
-                            return
-                        }
-                        if countAfterDelay == 0 {
-                            parseAndUpdate(db, hub)
-                            log.Println("Новости восстановлены из RSS-канала.")
-                        }
-                        restoreMutex.Lock()
-                        restorationScheduled = false
-                        restoreMutex.Unlock()
-                    }()
-                } else {
-                    restoreMutex.Unlock()
-                }
+                    time.Sleep(1 * time.Minute)
+                    // Проверяем, всё ещё ли таблица пуста
+                    countAfterDelay, err := countNews(db)
+                    if err != nil {
+                        log.Printf("Ошибка подсчета новостей после задержки: %v", err)
+                        restorationLock.Unlock()
+                        return
+                    }
+                    if countAfterDelay == 0 {
+                        parseAndUpdate(db, hub)
+                    }
+                    restorationLock.Unlock()
+                }()
             }
         }
     }()
 
-    // Настройка веб-сервера с тайм-аутами для ускорения запуска
+    // Настройка HTTP-сервера с тайм-аутами для уменьшения задержки запуска
     server := &http.Server{
         Addr:         ":9742",
-        ReadTimeout:  3 * time.Second,  // Уменьшен ReadTimeout до 3 секунд
-        WriteTimeout: 3 * time.Second,  // Уменьшен WriteTimeout до 3 секунд
-        IdleTimeout:  5 * time.Second,  // Уменьшен IdleTimeout до 5 секунд
+        ReadTimeout:  5 * time.Second,
+        WriteTimeout: 10 * time.Second,
+        IdleTimeout:  15 * time.Second,
     }
 
     fmt.Println("Сервер запущен на порту 9742")
-    if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+    if err := server.ListenAndServe(); err != nil {
         log.Fatalf("Ошибка запуска сервера: %v", err)
     }
 }
