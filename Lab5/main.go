@@ -253,7 +253,6 @@ func main() {
 	hub := newHub()
 	go hub.run()
 
-	// Маршруты
 	http.HandleFunc("/ws", serveWs(hub, db))
 	http.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "dashboard.html")
