@@ -1,3 +1,1 @@
-Ошибка отправки сообщения по WebSocket: write tcp [::1]:9742->[::1]:52546: wsasend: An established connection was aborted by the software in your host machine.
 
-После запуска кода возникает следующая ошибка. Исправь код и предсотавь мне переделанный исправленный вариант
