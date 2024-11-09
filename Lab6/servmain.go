@@ -13,6 +13,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	"github.com/mmcdole/gofeed"
+	"github.com/rainycape/unidecode"
 )
 
 type NewsItem struct {
