@@ -22,7 +22,6 @@ type NewsItem struct {
 	Description string    `json:"Description"`
 	PubDate     time.Time `json:"PubDate"`
 }
-
 type WebSocketHub struct {
 	clients    map[*websocket.Conn]bool
 	broadcast  chan []NewsItem
@@ -39,7 +38,6 @@ func newHub() *WebSocketHub {
 		unregister: make(chan *websocket.Conn),
 	}
 }
-
 func (h *WebSocketHub) run() {
 	for {
 		select {
@@ -59,7 +57,7 @@ func (h *WebSocketHub) run() {
 			for conn := range h.clients {
 				err := conn.WriteJSON(news)
 				if err != nil {
-					log.Printf("Ошибка отправки сообщения: %v", err)
+					log.Printf("Error sending message: %v", err)
 					conn.Close()
 					delete(h.clients, conn)
 				}
@@ -81,7 +79,6 @@ func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
 	var news []NewsItem
 	for rows.Next() {
 		var item NewsItem
@@ -94,28 +91,25 @@ func fetchAllNews(db *sql.DB) ([]NewsItem, error) {
 	}
 	return news, nil
 }
-
 func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("Ошибка апгрейда WebSocket: %v", err)
+			log.Printf("WebSocket upgrade error: %v", err)
 			return
 		}
 		hub.register <- conn
-
 		news, err := fetchAllNews(db)
 		if err != nil {
-			log.Printf("Ошибка получения новостей: %v", err)
+			log.Printf("Error receiving news: %v", err)
 		} else {
 			err = conn.WriteJSON(news)
 			if err != nil {
-				log.Printf("Ошибка отправки новостей: %v", err)
+				log.Printf("Error sending news: %v", err)
 				conn.Close()
 				hub.unregister <- conn
 			}
 		}
-
 		go func() {
 			defer func() {
 				hub.unregister <- conn
@@ -129,15 +123,13 @@ func serveWs(hub *WebSocketHub, db *sql.DB) http.HandlerFunc {
 		}()
 	}
 }
-
 func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	fp := gofeed.NewParser()
 	feed, err := fp.ParseURL("https://ldpr.ru/RSS")
 	if err != nil {
-		log.Printf("Ошибка парсинга RSS: %v", err)
+		log.Printf("RSS parsing error: %v", err)
 		return
 	}
-
 	stmt, err := db.Prepare(`INSERT INTO iu9Trofimenko (title, link, description, pub_date)
         VALUES (?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
@@ -145,11 +137,10 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
             description = VALUES(description),
             pub_date = VALUES(pub_date)`)
 	if err != nil {
-		log.Printf("Ошибка подготовки запроса: %v", err)
+		log.Printf("Error preparing request: %v", err)
 		return
 	}
 	defer stmt.Close()
-
 	for _, item := range feed.Items {
 		title := unidecode.Unidecode(item.Title)
 		link := unidecode.Unidecode(item.Link)
@@ -160,68 +151,58 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 		} else {
 			pubDate = time.Now()
 		}
-
 		_, err := stmt.Exec(title, link, description, pubDate)
 		if err != nil {
-			log.Printf("Ошибка вставки/обновления новости: %v", err)
+			log.Printf("Error inserting/updating news: %v", err)
 		}
 	}
-
 	news, err := fetchAllNews(db)
 	if err != nil {
-		log.Printf("Ошибка получения новостей: %v", err)
+		log.Printf("Error receiving news: %v", err)
 		return
 	}
-
 	hub.broadcast <- news
 }
-
 func countNews(db *sql.DB) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM iu9Trofimenko`).Scan(&count)
 	return count, err
 }
-
 func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, timerDuration time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
 	var lastNewsHash string
 	var timer *time.Timer
 	var timerActive bool
 	var timerMu sync.Mutex
-
 	for range ticker.C {
 		news, err := fetchAllNews(db)
 		if err != nil {
-			log.Printf("Ошибка при мониторинге базы данных: %v", err)
+			log.Printf("Database monitoring error: %v", err)
 			continue
 		}
-
 		newsJSON, _ := json.Marshal(news)
 		currentHash := fmt.Sprintf("%x", md5.Sum(newsJSON))
-
 		if currentHash != lastNewsHash {
 			lastNewsHash = currentHash
 			hub.broadcast <- news
 		}
-
 		if len(news) == 0 {
 			timerMu.Lock()
 			if !timerActive {
-				log.Println("Таблица пуста. 1 минута для восстановления данных")
+				log.Println("The table is empty. 1 minute to recover data")
 				timer = time.AfterFunc(timerDuration, func() {
 					parseAndUpdate(db, hub)
 					newCount, err := countNews(db)
 					if err != nil {
-						log.Printf("Ошибка подсчёта новостей после восстановления: %v", err)
+						log.Printf("News counting error after recovery: %v", err)
 						return
 					}
 					if newCount > 0 {
 						timerMu.Lock()
 						timerActive = false
 						timerMu.Unlock()
-						log.Println("Данные восстановлены")
+						log.Println("Data recovered")
 					}
 				})
 				timerActive = true
@@ -230,7 +211,7 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, time
 		} else {
 			timerMu.Lock()
 			if timerActive && timer != nil {
-				log.Println("Таблица заполнена")
+				log.Println("The table is full")
 				timer.Stop()
 				timerActive = false
 			}
@@ -238,21 +219,18 @@ func monitorDatabase(db *sql.DB, hub *WebSocketHub, interval time.Duration, time
 		}
 	}
 }
-
 func main() {
 	dsn := "iu9networkslabs:Je2dTYr6@tcp(students.yss.su:3306)/iu9networkslabs?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatalf("Не удалось подключиться к базе данных: %v", err)
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Не удалось проверить подключение к базе данных: %v", err)
+		log.Fatalf("Failed to check database connection: %v", err)
 	}
-
 	hub := newHub()
 	go hub.run()
-
 	http.HandleFunc("/ws", serveWs(hub, db))
 	http.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "dashboard.html")
@@ -260,22 +238,17 @@ func main() {
 	http.HandleFunc("/parser", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "parser.html")
 	})
-
 	server := &http.Server{
 		Addr: "185.102.139.168:9742",
 	}
-
 	go func() {
-		log.Println("Запуск веб-сервера на адресе http://185.102.139.168:9742")
+		log.Println("Starting a web server at 185.102.139.168:9742")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Ошибка запуска сервера: %v", err)
+			log.Fatalf("Server start error: %v", err)
 		}
 	}()
-
 	go parseAndUpdate(db, hub)
-
 	go monitorDatabase(db, hub, 2*time.Second, 1*time.Minute)
-
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -284,6 +257,5 @@ func main() {
 			<-ticker.C
 		}
 	}()
-
 	select {}
 }
