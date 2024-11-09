@@ -153,9 +153,9 @@ func parseAndUpdate(db *sql.DB, hub *WebSocketHub) {
 	defer stmt.Close()
 
 	for _, item := range feed.Items {
-		title := item.Title          // Можно оставить unidecode, если необходимо
-		link := item.Link            // Убираем unidecode для link
-		description := item.Description // Можно оставить unidecode, если необходимо
+		title := unidecode.Unidecode(item.Title)
+		link := unidecode.Unidecode(item.Link)
+		description := unidecode.Unidecode(item.Description)
 		var pubDate time.Time
 		if item.PublishedParsed != nil {
 			pubDate = *item.PublishedParsed
