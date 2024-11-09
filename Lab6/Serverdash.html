@@ -11,8 +11,9 @@
     </div>
 
     <script>
-        // Указываем явный WebSocket URL с IP и портом сервера
-        const ws = new WebSocket("ws://185.102.139.168:9742/ws");
+        // Используем текущий хост для WebSocket, что делает URL динамическим
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const ws = new WebSocket(wsProtocol + window.location.hostname + ":9742/ws");
 
         ws.onopen = function() {
             console.log("WebSocket подключен");
