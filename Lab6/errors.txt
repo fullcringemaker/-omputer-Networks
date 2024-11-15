@@ -1,6 +1,0 @@
-ftp> rmr parcheck
-Начинаю рекурсивное удаление директории: parcheck
-Начинаю рекурсивное удаление директории: parcheck/child_dir1
-Файл удален: parcheck/child_dir1/testiki.txt
-Директория parcheck/child_dir1 успешно удалена рекурсивно
-Ошибка рекурсивного удаления директории: 550 parcheck/child_dir1: No such file or directory
