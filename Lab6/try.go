@@ -226,10 +226,11 @@ func removeDirRecursively(c *ftp.ServerConn, dir string) error {
 				return err
 			}
 			// Удаляем пустую директорию после очистки
-			err = c.RemoveDir(fullPath)
-			if err != nil {
-				return err
-			}
+			// **Удален этот вызов, чтобы избежать повторного удаления**
+			// err = c.RemoveDir(fullPath)
+			// if err != nil {
+			// 	return err
+			// }
 			fmt.Printf("Директория удалена: %s\n", fullPath)
 		} else {
 			// Удаляем файл
