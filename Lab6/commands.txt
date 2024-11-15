@@ -1,0 +1,26 @@
+upload cringe.txt
+
+download cringe.txt
+
+mkdir vitalik
+
+delete cringe.txt
+
+ls
+
+cd vitalik
+
+rmdir vitalik
+
+mkdir par_dir
+cd par_dir
+mkdir child_dir1
+mkdir child_dir2
+cd child_dir1
+upload testiki.txt
+cd ..
+cd child_dir2
+upload testiki.txt
+cd ..
+cd ..
+rmr par_dir
