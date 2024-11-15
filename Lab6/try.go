@@ -6,7 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
@@ -113,7 +113,7 @@ func uploadFile(c *ftp.ServerConn, localPath string) {
 	}
 	defer file.Close()
 
-	remotePath := filepath.Base(localPath)
+	remotePath := path.Base(localPath)
 	err = c.Stor(remotePath, file)
 	if err != nil {
 		fmt.Printf("Ошибка загрузки файла: %v\n", err)
@@ -130,7 +130,7 @@ func downloadFile(c *ftp.ServerConn, remotePath string) {
 	}
 	defer r.Close()
 
-	localPath := filepath.Base(remotePath)
+	localPath := path.Base(remotePath)
 	file, err := os.Create(localPath)
 	if err != nil {
 		fmt.Printf("Ошибка создания локального файла: %v\n", err)
@@ -217,7 +217,7 @@ func removeDirRecursively(c *ftp.ServerConn, dir string) error {
 			continue
 		}
 
-		fullPath := filepath.Join(dir, entry.Name)
+		fullPath := path.Join(dir, entry.Name)
 
 		if entry.Type == ftp.EntryTypeFolder {
 			// Рекурсивно удаляем поддиректорию
@@ -249,4 +249,3 @@ func removeDirRecursively(c *ftp.ServerConn, dir string) error {
 	fmt.Printf("Директория %s успешно удалена рекурсивно\n", dir)
 	return nil
 }
-
