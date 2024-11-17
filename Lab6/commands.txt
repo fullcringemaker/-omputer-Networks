@@ -1,26 +1,23 @@
-upload cringe.txt
+upload testfile.txt
 
-download cringe.txt
+download testfile.txt
 
-mkdir vitalik
+delete testfile.txt
 
-delete cringe.txt
+mkdir testdir
 
-ls
+cd testdir
+cd ..
+rmdir testdir
 
-cd vitalik
-
-rmdir vitalik
-
-mkdir par_dir
-cd par_dir
+mkdir rootdir
+cd rootdir
 mkdir child_dir1
 mkdir child_dir2
 cd child_dir1
-upload testiki.txt
+upload testfile.txt
 cd ..
-cd child_dir2
-upload testiki.txt
+upload testfile.txt
 cd ..
-cd ..
-rmr par_dir
+
+rmr rootdir
