@@ -4,7 +4,6 @@ package main
 
 import (
 	"log"
-	"net"
 	"os"
 
 	"github.com/goftp/file-driver"
@@ -37,9 +36,9 @@ func main() {
 	opts := &server.ServerOpts{
 		Factory:      factory,
 		Auth:         auth,
-		Port:         9742,               // FTP server port
-		PassivePorts: "30000-30009",      // Passive ports range
-		Hostname:     "0.0.0.0",          // Bind to all network interfaces
+		Port:         9742,              // FTP server port
+		PassivePorts: "30000-30009",     // Passive ports range
+		Hostname:     "0.0.0.0",         // Bind to all network interfaces
 	}
 
 	// Create the FTP server instance
