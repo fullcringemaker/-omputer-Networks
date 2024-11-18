@@ -1,0 +1,13 @@
+.\ftpserver.go:27:21: undefined: ftpserver.User
+.\ftpserver.go:34:22: undefined: ftpserver.Config
+.\ftpserver.go:55:18: undefined: ftpserver.User
+.\ftpserver.go:65:54: undefined: ftpserver.User
+.\ftpserver.go:69:19: undefined: ftpserver.User
+.\ftpserver.go:74:18: undefined: ftpserver.User
+.\ftpserver.go:77:56: undefined: ftpserver.User
+.\ftpserver.go:89:43: undefined: ftpserver.Context
+.\ftpserver.go:111:68: undefined: ftpserver.Entry
+.\ftpserver.go:176:56: undefined: ftpserver.Entry
+.\ftpserver.go:69:19: too many errors
+
+при запуске программы 
