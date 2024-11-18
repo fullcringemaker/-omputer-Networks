@@ -25,7 +25,7 @@ func main() {
     }
 
     // Настройка конфигурации FTP-сервера
-    conf := &server.Config{
+    conf := &server.ServerConfig{
         Factory: &server.SimpleDriverFactory{
             RootPath: ftpRoot,
         },
