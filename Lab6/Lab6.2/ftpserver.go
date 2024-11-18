@@ -1,61 +1,54 @@
+// ftpserver.go
+
 package main
 
 import (
-    "fmt"
-    "log"
-    "os"
+	"log"
+	"net"
+	"os"
 
-    "github.com/goftp/server"
-)
-
-// Константы для настройки FTP-сервера
-const (
-    ftpUsername = "user"        // Простое имя пользователя
-    ftpPassword = "password"    // Простой пароль
-    ftpPort     = 9742          // Порт FTP-сервера
-    ftpRoot     = "./ftproot"    // Корневая директория FTP-сервера
+	"github.com/goftp/file-driver"
+	"github.com/goftp/server"
 )
 
 func main() {
-    // Проверка наличия корневой директории, если нет — создание
-    if _, err := os.Stat(ftpRoot); os.IsNotExist(err) {
-        err := os.MkdirAll(ftpRoot, os.ModePerm)
-        if err != nil {
-            log.Fatalf("Не удалось создать корневую директорию: %v", err)
-        }
-    }
+	// Define the FTP server's root directory
+	rootPath := "./ftproot"
 
-    // Настройка авторизации
-    auth := &server.SimpleAuth{
-        Credentials: map[string]string{
-            ftpUsername: ftpPassword,
-        },
-    }
+	// Create the root directory if it doesn't exist
+	err := os.MkdirAll(rootPath, os.ModePerm)
+	if err != nil {
+		log.Fatalf("Error creating root directory: %v", err)
+	}
 
-    // Настройка фабрики драйвера
-    factory := &server.SimpleDriverFactory{
-        RootPath: ftpRoot,
-    }
+	// Set up the file driver (handles file system operations)
+	factory := &filedriver.FileDriverFactory{
+		RootPath: rootPath,
+		Perm:     server.NewSimplePerm("user", "group"),
+	}
 
-    // Настройка разрешений (чтение и запись)
-    perm := server.NewSimplePerm("read", "write")
+	// Set up simple authentication with a username and password
+	auth := &server.SimpleAuth{
+		Name:     "user", // Username
+		Password: "pass", // Password
+	}
 
-    // Конфигурация FTP-сервера
-    conf := &server.Config{
-        Factory:       factory,
-        Port:          ftpPort,
-        Auth:          auth,
-        Perm:          perm,
-        PassivePorts:  []int{3000, 3001, 3002}, // Порты для пассивных соединений
-        WelcomeMessage: "Добро пожаловать на FTP-сервер!",
-    }
+	// Configure the FTP server options
+	opts := &server.ServerOpts{
+		Factory:      factory,
+		Auth:         auth,
+		Port:         9742,               // FTP server port
+		PassivePorts: "30000-30009",      // Passive ports range
+		Hostname:     "0.0.0.0",          // Bind to all network interfaces
+	}
 
-    // Создание FTP-сервера с заданной конфигурацией
-    s := server.NewServer(conf)
+	// Create the FTP server instance
+	ftpServer := server.NewServer(opts)
 
-    // Запуск FTP-сервера
-    fmt.Printf("Запуск FTP-сервера на порту %d...\n", ftpPort)
-    if err := s.ListenAndServe(); err != nil {
-        log.Fatalf("Ошибка запуска FTP-сервера: %v", err)
-    }
+	// Start the FTP server
+	log.Printf("Starting FTP server on port %d...", opts.Port)
+	err = ftpServer.ListenAndServe()
+	if err != nil {
+		log.Fatalf("Error starting FTP server: %v", err)
+	}
 }
