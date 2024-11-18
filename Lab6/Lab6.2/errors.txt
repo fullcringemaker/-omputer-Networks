@@ -1,5 +1,2 @@
-go run ftpserver.go
 # command-line-arguments
-./ftpserver.go:28:21: undefined: server.Config
-./ftpserver.go:29:26: undefined: server.SimpleDriverFactory
-./ftpserver.go:34:13: unknown field Credentials in struct literal of type server.SimpleAuth
+./ftpserver.go:7:2: "net" imported and not used
