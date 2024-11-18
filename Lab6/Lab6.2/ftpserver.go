@@ -4,17 +4,14 @@ import (
     "fmt"
     "log"
     "os"
-    "path/filepath"
 
-    "github.com/goftp/file-driver"
     "github.com/goftp/server"
 )
 
-// Простые учетные данные для авторизации
 const (
-    ftpUsername = "user"
-    ftpPassword = "password"
-    ftpPort     = "9742"
+    ftpUsername = "user"      // Простой логин
+    ftpPassword = "password"  // Простой пароль
+    ftpPort     = 9742        // Порт сервера
     ftpRoot     = "./ftproot" // Корневая директория FTP-сервера
 )
 
@@ -27,52 +24,28 @@ func main() {
         }
     }
 
-    // Настройка авторизатора
-    auth := &Auth{
-        Credentials: map[string]string{
-            ftpUsername: ftpPassword,
+    // Настройка конфигурации FTP-сервера
+    conf := &server.Config{
+        Factory: &server.SimpleDriverFactory{
+            RootPath: ftpRoot,
         },
+        Port: ftpPort,
+        Auth: &server.SimpleAuth{
+            Credentials: map[string]string{
+                ftpUsername: ftpPassword,
+            },
+        },
+        // Параметры разрешений (чтение и запись)
+        Perm: server.NewSimplePerm("read", "write"),
+        // Опционально: Настройка пассивных портов
+        // PassivePorts: []int{3000, 3001, 3002},
     }
 
-    // Настройка файлового драйвера
-    driver := filedriver.NewDriver(ftpRoot)
+    // Создание нового FTP-сервера с заданной конфигурацией
+    s := server.NewServer(conf)
 
-    // Настройка FTP-сервера
-    s := server.NewServer(&server.Config{
-        Factory:  driver,
-        Port:     ftpPort,
-        Auth:     auth,
-        Perm:     server.NewSimplePerm("user", "user", "user"),
-        PassivePorts: []int{3000, 3001, 3002}, // Порты для пассивных соединений
-    })
-
-    // Запуск FTP-сервера
-    fmt.Printf("Запуск FTP-сервера на порту %s...\n", ftpPort)
+    fmt.Printf("Запуск FTP-сервера на порту %d...\n", ftpPort)
     if err := s.ListenAndServe(); err != nil {
         log.Fatalf("Ошибка запуска FTP-сервера: %v", err)
     }
-}
-
-// Структура для авторизации
-type Auth struct {
-    Credentials map[string]string
-}
-
-// Реализация интерфейса AuthUser
-func (a *Auth) CheckPasswd(user, pass string) bool {
-    if pwd, ok := a.Credentials[user]; ok {
-        return pwd == pass
-    }
-    return false
-}
-
-func (a *Auth) GetUser(name string) (server.User, bool) {
-    if _, ok := a.Credentials[name]; ok {
-        return &server.SimpleUser{
-            Name:   name,
-            Dir:    ftpRoot,
-            Perm:   server.NewSimplePerm(name, name, name),
-        }, true
-    }
-    return nil, false
 }
