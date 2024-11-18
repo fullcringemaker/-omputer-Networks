@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/goftp/file-driver"
+	filedriver "github.com/goftp/file-driver"
 	"github.com/goftp/server"
 )
 
@@ -28,17 +28,17 @@ func main() {
 
 	// Set up simple authentication with a username and password
 	auth := &server.SimpleAuth{
-		Name:     "user", // Username
-		Password: "pass", // Password
+		Name:     "user",     // Username
+		Password: "password", // Password
 	}
 
 	// Configure the FTP server options
 	opts := &server.ServerOpts{
 		Factory:      factory,
 		Auth:         auth,
-		Port:         9742,              // FTP server port
-		PassivePorts: "30000-30009",     // Passive ports range
-		Hostname:     "0.0.0.0",         // Bind to all network interfaces
+		Port:         9742,          // FTP server port
+		PassivePorts: "30000-30009", // Passive ports range
+		Hostname:     "0.0.0.0",     // Bind to all network interfaces
 	}
 
 	// Create the FTP server instance
