@@ -1,1 +1,228 @@
+package main
+
+import (
+    "bufio"
+    "fmt"
+    "io"
+    "log"
+    "os"
+    "path"
+    "strings"
+    "time"
+
+    "github.com/jlaffaye/ftp"
+)
+
+const (
+    ftpHost = "185.102.139.168:9742" // IP-адрес вашего сервера и новый порт
+    ftpUser = "user"                 // Новый логин
+    ftpPass = "password"             // Новый пароль
+)
+
+func main() {
+    c, err := ftp.Dial(ftpHost, ftp.DialWithTimeout(5*time.Second))
+    if err != nil {
+        log.Fatalf("Не удалось подключиться к FTP-серверу: %v", err)
+    }
+    defer c.Quit()
+    err = c.Login(ftpUser, ftpPass)
+    if err != nil {
+        log.Fatalf("Не удалось авторизоваться: %v", err)
+    }
+    fmt.Println("Подключение и авторизация к FTP-серверу выполнены успешно")
+    reader := bufio.NewReader(os.Stdin)
+    for {
+        fmt.Print("ftp> ")
+        input, _ := reader.ReadString('\n')
+        input = strings.TrimSpace(input)
+        if input == "" {
+            continue
+        }
+        args := strings.Split(input, " ")
+        cmd := strings.ToLower(args[0])
+        switch cmd {
+        case "upload":
+            if len(args) != 2 {
+                fmt.Println("Использование: upload <local_path>")
+                continue
+            }
+            uploadFile(c, args[1])
+        case "download":
+            if len(args) != 2 {
+                fmt.Println("Использование: download <remote_path>")
+                continue
+            }
+            downloadFile(c, args[1])
+        case "mkdir":
+            if len(args) != 2 {
+                fmt.Println("Использование: mkdir <directory_name>")
+                continue
+            }
+            makeDir(c, args[1])
+        case "delete":
+            if len(args) != 2 {
+                fmt.Println("Использование: delete <remote_file>")
+                continue
+            }
+            deleteFile(c, args[1])
+        case "ls":
+            listDir(c)
+        case "cd":
+            if len(args) != 2 {
+                fmt.Println("Использование: cd <directory>")
+                continue
+            }
+            changeDir(c, args[1])
+        case "rmdir":
+            if len(args) != 2 {
+                fmt.Println("Использование: rmdir <directory>")
+                continue
+            }
+            removeDir(c, args[1], false)
+        case "rmr":
+            if len(args) != 2 {
+                fmt.Println("Использование: rmr <directory>")
+                continue
+            }
+            err := removeDirRecursively(c, args[1])
+            if err != nil {
+                fmt.Printf("Ошибка при рекурсивном удалении директории: %v\n", err)
+            } else {
+                fmt.Println("Директория была рекурсивно удалена")
+            }
+        case "quit", "exit":
+            fmt.Println("Выход из FTP-клиента")
+            return
+        default:
+            fmt.Println("Неизвестная команда. Доступные команды: upload, download, mkdir, delete, ls, cd, rmdir, rmr, quit")
+        }
+    }
+}
+
+func uploadFile(c *ftp.ServerConn, localPath string) {
+    file, err := os.Open(localPath)
+    if err != nil {
+        fmt.Printf("Ошибка открытия локального файла: %v\n", err)
+        return
+    }
+    defer file.Close()
+    remotePath := path.Base(localPath)
+    err = c.Stor(remotePath, file)
+    if err != nil {
+        fmt.Printf("Ошибка загрузки файла: %v\n", err)
+        return
+    }
+    fmt.Println("Файл был загружен")
+}
+
+func downloadFile(c *ftp.ServerConn, remotePath string) {
+    r, err := c.Retr(remotePath)
+    if err != nil {
+        fmt.Printf("Ошибка скачивания файла: %v\n", err)
+        return
+    }
+    defer r.Close()
+    localPath := path.Base(remotePath)
+    file, err := os.Create(localPath)
+    if err != nil {
+        fmt.Printf("Ошибка создания локального файла: %v\n", err)
+        return
+    }
+    defer file.Close()
+    _, err = io.Copy(file, r)
+    if err != nil {
+        fmt.Printf("Ошибка записи в локальный файл: %v\n", err)
+        return
+    }
+    fmt.Println("Файл был скачан")
+}
+
+func makeDir(c *ftp.ServerConn, dirName string) {
+    err := c.MakeDir(dirName)
+    if err != nil {
+        fmt.Printf("Ошибка создания директории: %v\n", err)
+        return
+    }
+    fmt.Println("Директория была создана")
+}
+
+func deleteFile(c *ftp.ServerConn, fileName string) {
+    err := c.Delete(fileName)
+    if err != nil {
+        fmt.Printf("Ошибка удаления файла: %v\n", err)
+        return
+    }
+    fmt.Println("Файл был удален")
+}
+
+func listDir(c *ftp.ServerConn) {
+    entries, err := c.List("")
+    if err != nil {
+        fmt.Printf("Ошибка получения списка директорий: %v\n", err)
+        return
+    }
+    for _, entry := range entries {
+        fmt.Printf("%s\t%s\t%d\n", entry.Type, entry.Name, entry.Size)
+    }
+}
+
+func changeDir(c *ftp.ServerConn, dir string) {
+    err := c.ChangeDir(dir)
+    if err != nil {
+        fmt.Printf("Ошибка смены директории: %v\n", err)
+        return
+    }
+    fmt.Println("Текущая директория была изменена")
+}
+
+func removeDir(c *ftp.ServerConn, dir string, recursive bool) {
+    if recursive {
+        err := removeDirRecursively(c, dir)
+        if err != nil {
+            fmt.Printf("Ошибка при рекурсивном удалении директории: %v\n", err)
+            return
+        }
+        fmt.Println("Директория была рекурсивно удалена")
+    } else {
+        err := c.RemoveDir(dir)
+        if err != nil {
+            fmt.Printf("Ошибка удаления директории: %v\n", err)
+            return
+        }
+        fmt.Println("Директория была удалена")
+    }
+}
+
+func removeDirRecursively(c *ftp.ServerConn, dir string) error {
+    fmt.Printf("Начало рекурсивного удаления директории: %s\n", dir)
+    entries, err := c.List(dir)
+    if err != nil {
+        return err
+    }
+    for _, entry := range entries {
+        if entry.Name == "." || entry.Name == ".." {
+            continue
+        }
+        fullPath := path.Join(dir, entry.Name)
+        if entry.Type == ftp.EntryTypeFolder {
+            err = removeDirRecursively(c, fullPath)
+            if err != nil {
+                return err
+            }
+            fmt.Printf("Директория была удалена: %s\n", fullPath)
+        } else {
+            err = c.Delete(fullPath)
+            if err != nil {
+                return err
+            }
+            fmt.Printf("Файл был удален: %s\n", fullPath)
+        }
+    }
+    err = c.RemoveDir(dir)
+    if err != nil {
+        return err
+    }
+    fmt.Printf("Директория %s была рекурсивно удалена\n", dir)
+    return nil
+}
 
