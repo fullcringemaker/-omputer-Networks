@@ -1,11 +1,5 @@
+go run ftpserver.go
 # command-line-arguments
-.\ftpserver.go:37:23: undefined: filedriver.NewDriver
-.\ftpserver.go:40:32: undefined: server.Config
-.\ftpserver.go:44:54: too many arguments in call to server.NewSimplePerm
-        have (string, string, string)
-        want (string, string)
-.\ftpserver.go:68:45: undefined: server.User
-.\ftpserver.go:70:18: undefined: server.SimpleUser
-.\ftpserver.go:73:43: too many arguments in call to server.NewSimplePerm
-        have (string, string, string)
-        want (string, string)
+./ftpserver.go:28:21: undefined: server.Config
+./ftpserver.go:29:26: undefined: server.SimpleDriverFactory
+./ftpserver.go:34:13: unknown field Credentials in struct literal of type server.SimpleAuth
