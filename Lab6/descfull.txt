@@ -1,5 +1,5 @@
-у меня есть разработанный клиент ftp-сервера, внутри которого уже заложено подключение к какому-то серверу, который имеет ftp-host: students.yss.su, login: ftpiu8, passwd: 3Ru7yOTA
-
+Вот у меня есть 2 кода:
+первый это ftp-client:
 package main
 
 import (
@@ -16,22 +16,22 @@ import (
 )
 
 const (
-	ftpHost = "students.yss.su:21"
-	ftpUser = "ftpiu8"
-	ftpPass = "3Ru7yOTA"
+	ftpHost = "185.102.139.168:9742" // IP-адрес вашего сервера и новый порт
+	ftpUser = "user"                 // Новый логин
+	ftpPass = "password"             // Новый пароль
 )
 
 func main() {
 	c, err := ftp.Dial(ftpHost, ftp.DialWithTimeout(5*time.Second))
 	if err != nil {
-		log.Fatalf("Failed to connect to FTP server: %v", err)
+		log.Fatalf("Не удалось подключиться к FTP-серверу: %v", err)
 	}
 	defer c.Quit()
 	err = c.Login(ftpUser, ftpPass)
 	if err != nil {
-		log.Fatalf("Failed to login: %v", err)
+		log.Fatalf("Не удалось авторизоваться: %v", err)
 	}
-	fmt.Println("Connection and authorization to the FTP server completed")
+	fmt.Println("Подключение и авторизация к FTP-серверу выполнены успешно")
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("ftp> ")
@@ -45,25 +45,25 @@ func main() {
 		switch cmd {
 		case "upload":
 			if len(args) != 2 {
-				fmt.Println("Usage: upload <local_path>")
+				fmt.Println("Использование: upload <local_path>")
 				continue
 			}
 			uploadFile(c, args[1])
 		case "download":
 			if len(args) != 2 {
-				fmt.Println("Usage: download <remote_path>")
+				fmt.Println("Использование: download <remote_path>")
 				continue
 			}
 			downloadFile(c, args[1])
 		case "mkdir":
 			if len(args) != 2 {
-				fmt.Println("Usage: mkdir <directory_name>")
+				fmt.Println("Использование: mkdir <directory_name>")
 				continue
 			}
 			makeDir(c, args[1])
 		case "delete":
 			if len(args) != 2 {
-				fmt.Println("Usage: delete <remote_file>")
+				fmt.Println("Использование: delete <remote_file>")
 				continue
 			}
 			deleteFile(c, args[1])
@@ -71,124 +71,132 @@ func main() {
 			listDir(c)
 		case "cd":
 			if len(args) != 2 {
-				fmt.Println("Usage: cd <directory>")
+				fmt.Println("Использование: cd <directory>")
 				continue
 			}
 			changeDir(c, args[1])
 		case "rmdir":
 			if len(args) != 2 {
-				fmt.Println("Usage: rmdir <directory>")
+				fmt.Println("Использование: rmdir <directory>")
 				continue
 			}
 			removeDir(c, args[1], false)
 		case "rmr":
 			if len(args) != 2 {
-				fmt.Println("Usage: rmr <directory>")
+				fmt.Println("Использование: rmr <directory>")
 				continue
 			}
 			err := removeDirRecursively(c, args[1])
 			if err != nil {
-				fmt.Printf("Error recursively deleting directory: %v\n", err)
+				fmt.Printf("Ошибка при рекурсивном удалении директории: %v\n", err)
 			} else {
-				fmt.Println("Directory was deleted recursively")
+				fmt.Println("Директория была рекурсивно удалена")
 			}
 		case "quit", "exit":
-			fmt.Println("Exit FTP client")
+			fmt.Println("Выход из FTP-клиента")
 			return
 		default:
-			fmt.Println("Unknown command. Available commands: upload, download, mkdir, delete, ls, cd, rmdir, rmr, quit")
+			fmt.Println("Неизвестная команда. Доступные команды: upload, download, mkdir, delete, ls, cd, rmdir, rmr, quit")
 		}
 	}
 }
+
 func uploadFile(c *ftp.ServerConn, localPath string) {
 	file, err := os.Open(localPath)
 	if err != nil {
-		fmt.Printf("Error opening local file: %v\n", err)
+		fmt.Printf("Ошибка открытия локального файла: %v\n", err)
 		return
 	}
 	defer file.Close()
 	remotePath := path.Base(localPath)
 	err = c.Stor(remotePath, file)
 	if err != nil {
-		fmt.Printf("File download error: %v\n", err)
+		fmt.Printf("Ошибка загрузки файла: %v\n", err)
 		return
 	}
-	fmt.Println("File was uploaded")
+	fmt.Println("Файл был загружен")
 }
+
 func downloadFile(c *ftp.ServerConn, remotePath string) {
 	r, err := c.Retr(remotePath)
 	if err != nil {
-		fmt.Printf("Error downloading file: %v\n", err)
+		fmt.Printf("Ошибка скачивания файла: %v\n", err)
 		return
 	}
 	defer r.Close()
 	localPath := path.Base(remotePath)
 	file, err := os.Create(localPath)
 	if err != nil {
-		fmt.Printf("Error creating local file: %v\n", err)
+		fmt.Printf("Ошибка создания локального файла: %v\n", err)
 		return
 	}
 	defer file.Close()
 	_, err = io.Copy(file, r)
 	if err != nil {
-		fmt.Printf("Error writing to local file: %v\n", err)
+		fmt.Printf("Ошибка записи в локальный файл: %v\n", err)
 		return
 	}
-	fmt.Println("File was downloaded")
+	fmt.Println("Файл был скачан")
 }
+
 func makeDir(c *ftp.ServerConn, dirName string) {
 	err := c.MakeDir(dirName)
 	if err != nil {
-		fmt.Printf("Error creating directory: %v\n", err)
+		fmt.Printf("Ошибка создания директории: %v\n", err)
 		return
 	}
-	fmt.Println("Directory was created")
+	fmt.Println("Директория была создана")
 }
+
 func deleteFile(c *ftp.ServerConn, fileName string) {
 	err := c.Delete(fileName)
 	if err != nil {
-		fmt.Printf("Error deleting file: %v\n", err)
+		fmt.Printf("Ошибка удаления файла: %v\n", err)
 		return
 	}
-	fmt.Println("File was deleted")
+	fmt.Println("Файл был удален")
 }
+
 func listDir(c *ftp.ServerConn) {
 	entries, err := c.List("")
 	if err != nil {
-		fmt.Printf("Error getting directory listing: %v\n", err)
+		fmt.Printf("Ошибка получения списка директорий: %v\n", err)
 		return
 	}
 	for _, entry := range entries {
 		fmt.Printf("%s\t%s\t%d\n", entry.Type, entry.Name, entry.Size)
 	}
 }
+
 func changeDir(c *ftp.ServerConn, dir string) {
 	err := c.ChangeDir(dir)
 	if err != nil {
-		fmt.Printf("Error changing directory: %v\n", err)
+		fmt.Printf("Ошибка смены директории: %v\n", err)
 		return
 	}
-	fmt.Println("Current directory was changed")
+	fmt.Println("Текущая директория была изменена")
 }
+
 func removeDir(c *ftp.ServerConn, dir string, recursive bool) {
 	if recursive {
 		err := removeDirRecursively(c, dir)
 		if err != nil {
-			fmt.Printf("Error recursively deleting directory: %v\n", err)
+			fmt.Printf("Ошибка при рекурсивном удалении директории: %v\n", err)
 			return
 		}
-		fmt.Println("Directory was deleted recursively")
+		fmt.Println("Директория была рекурсивно удалена")
 	} else {
 		err := c.RemoveDir(dir)
 		if err != nil {
-			fmt.Printf("Error deleting directory: %v\n", err)
+			fmt.Printf("Ошибка удаления директории: %v\n", err)
 			return
 		}
-		fmt.Println("Directory was deleted")
+		fmt.Println("Директория была удалена")
 	}
 }
+
 func removeDirRecursively(c *ftp.ServerConn, dir string) error {
-	fmt.Printf("Start of recursive directory deletion: %s\n", dir)
+	fmt.Printf("Начало рекурсивного удаления директории: %s\n", dir)
 	entries, err := c.List(dir)
 	if err != nil {
 		return err
@@ -203,52 +211,86 @@ func removeDirRecursively(c *ftp.ServerConn, dir string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Directory was deleted: %s\n", fullPath)
+			fmt.Printf("Директория была удалена: %s\n", fullPath)
 		} else {
 			err = c.Delete(fullPath)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("File was deleted: %s\n", fullPath)
+			fmt.Printf("Файл был удален: %s\n", fullPath)
 		}
 	}
 	err = c.RemoveDir(dir)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Directory %s was deleted recursively\n", dir)
+	fmt.Printf("Директория %s была рекурсивно удалена\n", dir)
 	return nil
 }
 
 
-Этот код лежит на wds-сервере net3.yss.su с ip 185.102.139.168 и паролем, если это необходимо, gOsQ5p7FUJ9w. При этом в самом коде не нужно прописывать вход на сервер, если того не требуется для ftp-сервера. я дал все его данные только чтобы ты точно знал, где будет лежать файлик.
+вот ftp-server:
+// ftpserver.go
 
-Мне необходимо выполнить следующее задание (или задания, но нужен код, выполняющий все указанные требования):
-Разработка ftp сервера
-Рассматривается задача разработки ftp-сервера на языке GO.
-Задача 1: Реализовать ftp сервер на языке GO.
-Задача 2: Протестировать соединение ftp клиента (для тестирования можно
-использовать консольную версию ftp клиента используемой операционной
-системы или FileZilla, WinSCP и д.р.) с реализованным ftp сервером. Параметры
-доступа к ftp серверу могут быть заданы в коде программы или во внешнем
-конфигурационном файле. (лучше всего если будут заданы внури самой программы)
-Задача 3: ftp сервер должен обладать следующими функциями:
+package main
+
+import (
+	"log"
+	"os"
+
+	filedriver "github.com/goftp/file-driver"
+	"github.com/goftp/server"
+)
+
+func main() {
+	// Define the FTP server's root directory
+	rootPath := "./ftproot"
+
+	// Create the root directory if it doesn't exist
+	err := os.MkdirAll(rootPath, os.ModePerm)
+	if err != nil {
+		log.Fatalf("Error creating root directory: %v", err)
+	}
+
+	// Set up the file driver (handles file system operations)
+	factory := &filedriver.FileDriverFactory{
+		RootPath: rootPath,
+		Perm:     server.NewSimplePerm("user", "group"),
+	}
+
+	// Set up simple authentication with a username and password
+	auth := &server.SimpleAuth{
+		Name:     "user",     // Username
+		Password: "password", // Password
+	}
+
+	// Configure the FTP server options
+	opts := &server.ServerOpts{
+		Factory:      factory,
+		Auth:         auth,
+		Port:         9742,          // FTP server port
+		PassivePorts: "30000-30009", // Passive ports range
+		Hostname:     "0.0.0.0",     // Bind to all network interfaces
+	}
+
+	// Create the FTP server instance
+	ftpServer := server.NewServer(opts)
+
+	// Start the FTP server
+	log.Printf("Starting FTP server on port %d...", opts.Port)
+	err = ftpServer.ListenAndServe()
+	if err != nil {
+		log.Fatalf("Error starting FTP server: %v", err)
+	}
+}
+
+код ftp-server является реализацией, которую ты мне написал. Помоги мне проверить все функции, которые она должна выполнять, а именно исходя из изначального задания, необходимо написать, как проверить следующие функции:
 - поддерживать авторизацию клиента на ftp сервере;
-- передавать клиенту список содержимого заданной директории ftp сервера по запросу;
-- позволять клиенту скачивать файлы из заданной директории ftp сервера по запросу;
-- позволять клиенту загружать файлы в заданную директорию ftp сервера по запросу;
+- передавать клиенту список содержимого заданной директории
+ftp сервера по запросу;
+- позволять клиенту скачивать файлы из заданной директории ftp
+сервера по запросу;
+- позволять клиенту загружать файлы в заданную директорию ftp
+сервера по запросу;
 - позволять клиенту создавать директории на ftp сервере по запросу;
 - позволять клиенту удалять директории на ftp сервере по запросу.
-
-
-Напиши мне код, который будет выполнять описанное задание, а также подробно напиши ход проверки правильности написанного кода с целью протестировать соответствие указанному заданию
-
-Предоставь мне полную реализацию, без сокращений и без необходимости дописывать части кода с моей стороны. Если необходимо использовать порт, то используй 9742.
-Пароль и логин для сервера используй простые. В коде клиента, что я скинул, используются данные для другого сервера, и если это необходимо, то поменяй и там на простые данные для создаваемого сервера 
-
-Запуск сервера должен происходить командой go run ftpserver.go
-
-Ссылки для использования в коде:
-https://github.com/jlaffaye/ftp
-https://github.com/goftp/file-driver
-https://github.com/goftp/server
