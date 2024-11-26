@@ -7,10 +7,13 @@
 </head>
 <body>
     <h1>FTP Клиент - Консоль</h1>
-    <div id="console" style="background-color: #f0f0f0; padding: 10px; height: 300px; overflow-y: scroll;"></div>
-    <br>
+
+    <!-- Поле ввода команды и кнопка отправки -->
     <input type="text" id="commandInput" placeholder="Введите команду" style="width: 80%;">
     <button onclick="sendCommand()">Отправить</button>
+
+    <!-- Область вывода результатов -->
+    <div id="console" style="background-color: #f0f0f0; padding: 10px; margin-top: 20px;"></div>
 
     <script>
         var sessionID = getSessionID();
@@ -40,7 +43,9 @@
 
         function writeToConsole(message) {
             var consoleDiv = document.getElementById("console");
-            consoleDiv.innerHTML += message + "<br>";
+            // Заменяем символы переноса строки на <br> для отображения в HTML
+            var formattedMessage = message.replace(/\n/g, '<br>');
+            consoleDiv.innerHTML += formattedMessage + '<br>';
             consoleDiv.scrollTop = consoleDiv.scrollHeight;
         }
 
