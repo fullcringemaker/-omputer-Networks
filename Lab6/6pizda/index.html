@@ -1,0 +1,23 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>FTP Клиент - Вход</title>
+</head>
+<body>
+    <h1>FTP Клиент - Вход</h1>
+    <form method="post" action="/">
+        <label for="ftpHost">FTP Хост:</label><br>
+        <input type="text" id="ftpHost" name="ftpHost" placeholder="например, 185.104.251.226:21" required><br><br>
+
+        <label for="ftpUser">Логин:</label><br>
+        <input type="text" id="ftpUser" name="ftpUser" required><br><br>
+
+        <label for="ftpPass">Пароль:</label><br>
+        <input type="password" id="ftpPass" name="ftpPass" required><br><br>
+
+        <input type="submit" value="Подключиться">
+    </form>
+</body>
+</html>
