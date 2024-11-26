@@ -1,0 +1,53 @@
+<!-- work.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>FTP Клиент - Консоль</title>
+</head>
+<body>
+    <h1>FTP Клиент - Консоль</h1>
+    <div id="console" style="background-color: #f0f0f0; padding: 10px; height: 300px; overflow-y: scroll;"></div>
+    <br>
+    <input type="text" id="commandInput" placeholder="Введите команду" style="width: 80%;">
+    <button onclick="sendCommand()">Отправить</button>
+
+    <script>
+        var sessionID = getSessionID();
+        var wsUrl = "ws://" + "185.104.251.226:9742" + "/ws?session=" + sessionID;
+        var ws = new WebSocket(wsUrl);
+
+        ws.onopen = function() {
+            writeToConsole("Подключение к FTP-сессии установлено");
+        };
+
+        ws.onmessage = function(evt) {
+            writeToConsole(evt.data);
+        };
+
+        ws.onclose = function() {
+            writeToConsole("WebSocket соединение закрыто");
+        };
+
+        function sendCommand() {
+            var input = document.getElementById("commandInput");
+            var command = input.value;
+            if (command.trim() === "") return;
+            writeToConsole("> " + command);
+            ws.send(command);
+            input.value = "";
+        }
+
+        function writeToConsole(message) {
+            var consoleDiv = document.getElementById("console");
+            consoleDiv.innerHTML += message + "<br>";
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        }
+
+        function getSessionID() {
+            var params = new URLSearchParams(window.location.search);
+            return params.get("session");
+        }
+    </script>
+</body>
+</html>
