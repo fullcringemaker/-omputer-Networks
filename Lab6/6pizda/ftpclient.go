@@ -1,5 +1,3 @@
-// ftpclient.go
-
 package main
 
 import (
@@ -20,7 +18,7 @@ type FtpSession struct {
 }
 
 var (
-	upgrader   = websocket.Upgrader{} // используем настройки по умолчанию
+	upgrader   = websocket.Upgrader{}
 	sessions   = make(map[string]*FtpSession)
 	templates  = template.Must(template.ParseFiles("index.html", "work.html"))
 	serverIP   = "185.104.251.226"
@@ -28,33 +26,27 @@ var (
 )
 
 func main() {
-	// Обработчики HTTP маршрутов
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/work", workHandler)
 	http.HandleFunc("/ws", wsHandler)
 
-	// Адрес сервера
 	addr := fmt.Sprintf("%s:%d", serverIP, serverPort)
 	fmt.Printf("Сервер запущен на http://%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// Обработчик для страницы ввода данных (index.html)
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		templates.ExecuteTemplate(w, "index.html", nil)
 	} else if r.Method == http.MethodPost {
-		// Получаем данные из формы
 		ftpHost := r.FormValue("ftpHost")
 		ftpUser := r.FormValue("ftpUser")
 		ftpPass := r.FormValue("ftpPass")
 
-		// Проверяем, указан ли порт, и добавляем ":21", если нет
 		if !strings.Contains(ftpHost, ":") {
 			ftpHost = ftpHost + ":21"
 		}
 
-		// Устанавливаем FTP-соединение
 		c, err := ftp.Dial(ftpHost, ftp.DialWithTimeout(5*time.Second))
 		if err != nil {
 			http.Error(w, "Не удалось подключиться к FTP-серверу: "+err.Error(), http.StatusInternalServerError)
@@ -66,25 +58,19 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Создаём идентификатор сессии
 		sessionID := fmt.Sprintf("%s-%d", strings.ReplaceAll(r.RemoteAddr, ":", "-"), time.Now().UnixNano())
 
-		// Сохраняем FTP-сессию
 		sessions[sessionID] = &FtpSession{Client: c}
 
-		// Перенаправляем на страницу с консолью
 		http.Redirect(w, r, "/work?session="+sessionID, http.StatusFound)
 	}
 }
 
-// Обработчик для страницы консоли (work.html)
 func workHandler(w http.ResponseWriter, r *http.Request) {
 	templates.ExecuteTemplate(w, "work.html", nil)
 }
 
-// Обработчик для WebSocket соединений
 func wsHandler(w http.ResponseWriter, r *http.Request) {
-	// Обновляем HTTP соединение до WebSocket
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Ошибка обновления до WebSocket:", err)
@@ -92,7 +78,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	// Получаем идентификатор сессии из параметров запроса
 	sessionID := r.URL.Query().Get("session")
 	if sessionID == "" {
 		ws.WriteMessage(websocket.TextMessage, []byte("Идентификатор сессии отсутствует"))
@@ -106,9 +91,8 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer session.Client.Quit()
-	delete(sessions, sessionID) // Удаляем сессию после использования
+	delete(sessions, sessionID)
 
-	// Слушаем сообщения от клиента
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
@@ -124,8 +108,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-// Функция для обработки FTP-команд
 func handleCommand(c *ftp.ServerConn, cmd string) string {
 	args := parseCommand(cmd)
 	if len(args) == 0 {
@@ -172,8 +154,6 @@ func handleCommand(c *ftp.ServerConn, cmd string) string {
 		return "Неизвестная команда"
 	}
 }
-
-// Вспомогательные функции
 func parseCommand(input string) []string {
 	input = strings.TrimSpace(input)
 	return strings.Fields(input)
@@ -186,15 +166,12 @@ func listDir(c *ftp.ServerConn) string {
 	}
 	var result strings.Builder
 	for _, entry := range entries {
-		// Определяем тип: 'f' для файла, 'd' для директории
 		var typeIndicator string
 		if entry.Type == ftp.EntryTypeFolder {
-			typeIndicator = "d"
+			typeIndicator = "[D]"
 		} else {
-			typeIndicator = "f"
+			typeIndicator = "[F]"
 		}
-
-		// Форматируем вывод
 		result.WriteString(fmt.Sprintf("%s\t%s\n", typeIndicator, entry.Name))
 	}
 	return result.String()
