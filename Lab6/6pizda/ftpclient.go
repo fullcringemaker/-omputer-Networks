@@ -29,12 +29,10 @@ func main() {
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/work", workHandler)
 	http.HandleFunc("/ws", wsHandler)
-
 	addr := fmt.Sprintf("%s:%d", serverIP, serverPort)
-	fmt.Printf("Сервер запущен на http://%s\n", addr)
+	fmt.Printf("The server is running on http://%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
-
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		templates.ExecuteTemplate(w, "index.html", nil)
@@ -42,68 +40,57 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		ftpHost := r.FormValue("ftpHost")
 		ftpUser := r.FormValue("ftpUser")
 		ftpPass := r.FormValue("ftpPass")
-
 		if !strings.Contains(ftpHost, ":") {
 			ftpHost = ftpHost + ":21"
 		}
-
 		c, err := ftp.Dial(ftpHost, ftp.DialWithTimeout(5*time.Second))
 		if err != nil {
-			http.Error(w, "Не удалось подключиться к FTP-серверу: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Failed to connect to FTP server: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		err = c.Login(ftpUser, ftpPass)
 		if err != nil {
-			http.Error(w, "Не удалось авторизоваться: "+err.Error(), http.StatusUnauthorized)
+			http.Error(w, "Failed to login: "+err.Error(), http.StatusUnauthorized)
 			return
 		}
-
 		sessionID := fmt.Sprintf("%s-%d", strings.ReplaceAll(r.RemoteAddr, ":", "-"), time.Now().UnixNano())
-
 		sessions[sessionID] = &FtpSession{Client: c}
-
 		http.Redirect(w, r, "/work?session="+sessionID, http.StatusFound)
 	}
 }
-
 func workHandler(w http.ResponseWriter, r *http.Request) {
 	templates.ExecuteTemplate(w, "work.html", nil)
 }
-
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Ошибка обновления до WebSocket:", err)
+		log.Println("Error upgrading to WebSocket:", err)
 		return
 	}
 	defer ws.Close()
-
 	sessionID := r.URL.Query().Get("session")
 	if sessionID == "" {
-		ws.WriteMessage(websocket.TextMessage, []byte("Идентификатор сессии отсутствует"))
+		ws.WriteMessage(websocket.TextMessage, []byte("Session ID is missing"))
 		return
 	}
-
-	// Получаем FTP-сессию
 	session, ok := sessions[sessionID]
 	if !ok {
-		ws.WriteMessage(websocket.TextMessage, []byte("Неверный идентификатор сессии"))
+		ws.WriteMessage(websocket.TextMessage, []byte("Invalid session ID"))
 		return
 	}
 	defer session.Client.Quit()
 	delete(sessions, sessionID)
-
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
-			log.Println("Ошибка чтения сообщения:", err)
+			log.Println("Error reading message:", err)
 			break
 		}
 		cmd := string(message)
 		response := handleCommand(session.Client, cmd)
 		err = ws.WriteMessage(websocket.TextMessage, []byte(response))
 		if err != nil {
-			log.Println("Ошибка отправки сообщения:", err)
+			log.Println("Error sending message:", err)
 			break
 		}
 	}
@@ -111,58 +98,56 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func handleCommand(c *ftp.ServerConn, cmd string) string {
 	args := parseCommand(cmd)
 	if len(args) == 0 {
-		return "Команда не введена"
+		return "Command not entered"
 	}
-
 	switch args[0] {
 	case "ls":
 		return listDir(c)
 	case "cd":
 		if len(args) < 2 {
-			return "Использование: cd <directory>"
+			return "Usage: cd <directory>"
 		}
 		return changeDir(c, args[1])
 	case "upload":
-		return "Загрузка через веб-интерфейс не реализована"
+		return "Loading via web interface is not implemented"
 	case "download":
-		return "Скачивание через веб-интерфейс не реализовано"
+		return "Downloading via web interface is not implemented"
 	case "mkdir":
 		if len(args) < 2 {
-			return "Использование: mkdir <directory_name>"
+			return "Usage: mkdir <directory_name>"
 		}
 		return makeDir(c, args[1])
 	case "delete":
 		if len(args) < 2 {
-			return "Использование: delete <file_name>"
+			return "Usage: delete <file_name>"
 		}
 		return deleteFile(c, args[1])
 	case "rmdir":
 		if len(args) < 2 {
-			return "Использование: rmdir <directory>"
+			return "Usage: rmdir <directory>"
 		}
 		return removeDir(c, args[1], false)
 	case "rmr":
 		if len(args) < 2 {
-			return "Использование: rmr <directory>"
+			return "Usage: rmr <directory>"
 		}
 		err := removeDirRecursively(c, args[1])
 		if err != nil {
-			return "Ошибка рекурсивного удаления директории: " + err.Error()
+			return "Error recursively deleting directory: " + err.Error()
 		}
-		return "Директория была рекурсивно удалена"
+		return "Directory was deleted recursively"
 	default:
-		return "Неизвестная команда"
+		return "Unknown command. Available commands: upload, download, mkdir, delete, ls, cd, rmdir, rmr, quit"
 	}
 }
 func parseCommand(input string) []string {
 	input = strings.TrimSpace(input)
 	return strings.Fields(input)
 }
-
 func listDir(c *ftp.ServerConn) string {
 	entries, err := c.List("")
 	if err != nil {
-		return "Ошибка получения списка директорий: " + err.Error()
+		return "Error getting directory listing: " + err.Error()
 	}
 	var result strings.Builder
 	for _, entry := range entries {
@@ -176,47 +161,42 @@ func listDir(c *ftp.ServerConn) string {
 	}
 	return result.String()
 }
-
 func changeDir(c *ftp.ServerConn, dir string) string {
 	err := c.ChangeDir(dir)
 	if err != nil {
-		return "Ошибка смены директории: " + err.Error()
+		return "Error changing directory: " + err.Error()
 	}
-	return "Текущая директория была изменена"
+	return "Current directory was changed"
 }
-
 func makeDir(c *ftp.ServerConn, dirName string) string {
 	err := c.MakeDir(dirName)
 	if err != nil {
-		return "Ошибка создания директории: " + err.Error()
+		return "Error creating directory: " + err.Error()
 	}
-	return "Директория была создана"
+	return "Directory was created"
 }
-
 func deleteFile(c *ftp.ServerConn, fileName string) string {
 	err := c.Delete(fileName)
 	if err != nil {
-		return "Ошибка удаления файла: " + err.Error()
+		return "Error deleting file: " + err.Error()
 	}
-	return "Файл был удалён"
+	return "File was deleted "
 }
-
 func removeDir(c *ftp.ServerConn, dir string, recursive bool) string {
 	if recursive {
 		err := removeDirRecursively(c, dir)
 		if err != nil {
-			return "Ошибка рекурсивного удаления директории: " + err.Error()
+			return "Error recursively deleting directory: " + err.Error()
 		}
-		return "Директория была рекурсивно удалена"
+		return "Directory was deleted recursively"
 	} else {
 		err := c.RemoveDir(dir)
 		if err != nil {
-			return "Ошибка удаления директории: " + err.Error()
+			return "Error deleting directory: " + err.Error()
 		}
-		return "Директория была удалена"
+		return "Directory was deleted"
 	}
 }
-
 func removeDirRecursively(c *ftp.ServerConn, dir string) error {
 	entries, err := c.List(dir)
 	if err != nil {
