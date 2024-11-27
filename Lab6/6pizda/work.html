@@ -1,37 +1,27 @@
-<!-- work.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>FTP Клиент - Консоль</title>
+    <title>FTP Client - Console</title>
 </head>
 <body>
-    <h1>FTP Клиент - Консоль</h1>
-
-    <!-- Поле ввода команды и кнопка отправки -->
-    <input type="text" id="commandInput" placeholder="Введите команду" style="width: 80%;">
-    <button onclick="sendCommand()">Отправить</button>
-
-    <!-- Область вывода результатов -->
+    <h1>FTP Client - Console</h1>
+    <input type="text" id="commandInput" placeholder="Enter the command" style="width: 80%;">
+    <button onclick="sendCommand()">Send</button>
     <div id="console" style="background-color: #f0f0f0; padding: 10px; margin-top: 20px;"></div>
-
     <script>
         var sessionID = getSessionID();
         var wsUrl = "ws://" + "185.104.251.226:9742" + "/ws?session=" + sessionID;
         var ws = new WebSocket(wsUrl);
-
         ws.onopen = function() {
-            writeToConsole("Подключение к FTP-сессии установлено");
+            writeToConsole("Connection to FTP session established");
         };
-
         ws.onmessage = function(evt) {
             writeToConsole(evt.data);
         };
-
         ws.onclose = function() {
-            writeToConsole("WebSocket соединение закрыто");
+            writeToConsole("WebSocket connection closed");
         };
-
         function sendCommand() {
             var input = document.getElementById("commandInput");
             var command = input.value;
@@ -40,15 +30,12 @@
             ws.send(command);
             input.value = "";
         }
-
         function writeToConsole(message) {
-            var consoleDiv = document.getElementById("console");
-            // Заменяем символы переноса строки на <br> для отображения в HTML
+            var consoleDiv = document.getElementById("console"); 
             var formattedMessage = message.replace(/\n/g, '<br>');
             consoleDiv.innerHTML += formattedMessage + '<br>';
             consoleDiv.scrollTop = consoleDiv.scrollHeight;
         }
-
         function getSessionID() {
             var params = new URLSearchParams(window.location.search);
             return params.get("session");
