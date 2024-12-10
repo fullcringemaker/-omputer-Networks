@@ -1,0 +1,5 @@
+go run main.go
+# runtime/cgo
+cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
+
+при запуске кода всплывает следующая ошибка. ее необходимо исправить
