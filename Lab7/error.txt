@@ -1,5 +1,2 @@
 go run main.go
-# runtime/cgo
-cc1.exe: sorry, unimplemented: 64-bit mode not compiled in
-
-при запуске кода всплывает следующая ошибка. ее необходимо исправить
+command-line-arguments: open C:\Users\dmitr\AppData\Local\Temp\go-build305348505\b001\exe\main.exe: Operation did not complete successfully because the file contains a virus or potentially unwanted software.
