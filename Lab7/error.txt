@@ -1,2 +1,26 @@
 # command-line-arguments
 .\main.go:163:21: tx.AsMessage undefined (type *types.Transaction has no field or method AsMessage)
+for _, tx := range block.Transactions() {
+    from, err := types.Sender(signer, tx)
+    if err != nil {
+        continue
+    }
+
+    value := tx.Value()
+    gas := tx.Gas()
+    gasPrice := tx.GasPrice()
+    to := ""
+    if tx.To() != nil {
+        to = tx.To().Hex()
+    }
+
+    txData := TransactionData{
+        Hash:     tx.Hash().Hex(),
+        Value:    value.String(),
+        To:       to,
+        Gas:      gas,
+        GasPrice: gasPrice.String(),
+        From:     from.Hex(),
+    }
+    txs = append(txs, txData)
+}
