@@ -1,4 +1,5 @@
-Read-only and non-realtime mode activated in the data viewer to improve browser performance
-Select a key with fewer records to edit or view in realtime
+go run chain.go
+2024/12/11 14:36:48 Ошибка при подписке на новые заголовки:notifications not supported
+exit status 1
 
-над моей таблицей в Firebase появилось вот такая надпись, и из-за этого, как я понял, она не обновляет данные в таблице а режиме реального времени. покажи и скажи, как мне это исправить
+у меня возникает какая-то странная ошибка. исправь ее и предсотавь мне исправленный код
