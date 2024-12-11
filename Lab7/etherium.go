@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
 	"math/big"
@@ -12,99 +13,26 @@ import (
 	"time"
 )
 
-// ВНИМАНИЕ: Данный код объединяет все указанные требования в один файл/один код.
-// Он подключается к Ethereum blockchain через infura.io, получает блоки и транзакции,
-// записывает данные в Firebase Realtime Database, очищая базу данных при каждом запуске.
-// При появлении нового блока данные автоматически обновляются в Firebase,
-// следовательно, на клиентской стороне (при подключении к Firebase) данные обновятся
-// без перезагрузки страницы.
-
-// Исходные фрагменты кода, которые должны быть включены в итоговый код (адаптированы под новые данные):
-// ----- Получение последнего блока (адаптирован) -----
-// Пример кода: получение последнего блока и вывод его информации
-// (Этот код присутствует в итоговом решении, но с заменой адреса infura)
-func exampleGetLastBlock() {
-	client, err := ethclient.Dial("https://mainnet.infura.io/v3/6dd88c2f98b241eb8e15033618275191")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	header, err := client.HeaderByNumber(context.Background(), nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(header.Number.String())
-	blockNumber := big.NewInt(header.Number.Int64())
-	block, err := client.BlockByNumber(context.Background(), blockNumber) //get block with this number
-	if err != nil {
-		log.Fatal(err)
-	}
-	// all info about block
-	fmt.Println(block.Number().Uint64())
-	fmt.Println(block.Time())
-	fmt.Println(block.Difficulty().Uint64())
-	fmt.Println(block.Hash().Hex())
-	fmt.Println(len(block.Transactions()))
-}
-
-// ----- Получение данных из блока по номеру (адаптирован) -----
-// Пример кода: получение данных блока по заданному номеру
-// (В примере был жестко прописан номер блока и другой ключ, мы используем тот же URL infura, но можем взять любой блок)
-func exampleGetBlockByNumber() {
-	client, err := ethclient.Dial("https://mainnet.infura.io/v3/6dd88c2f98b241eb8e15033618275191")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	blockNumber := big.NewInt(15960495)
-	block, err := client.BlockByNumber(context.Background(), blockNumber)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(block.Number().Uint64())
-	fmt.Println(block.Time())
-	fmt.Println(block.Difficulty().Uint64())
-	fmt.Println(block.Hash().Hex())
-	fmt.Println(len(block.Transactions()))
-}
-
-// ----- Получение данных из полей транзакции (адаптирован) -----
-// Пример кода: получение транзакций для указанного блока и вывод их полей
-func exampleGetTransactionsFromBlock() {
-	client, err := ethclient.Dial("https://mainnet.infura.io/v3/6dd88c2f98b241eb8e15033618275191")
-	if err != nil {
-		log.Fatalln(err)
-	}
-	blockNumber := big.NewInt(15960495)
-	block, err := client.BlockByNumber(context.Background(), blockNumber)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, tx := range block.Transactions() {
-		fmt.Println(tx.ChainId())
-		fmt.Println(tx.Hash())
-		fmt.Println(tx.Value())
-		fmt.Println(tx.Cost())
-		fmt.Println(tx.To())
-		fmt.Println(tx.Gas())
-		fmt.Println(tx.GasPrice())
-	}
-}
-
-// ------------------------------------
-// Основная реализация программы:
-// ------------------------------------
+// Данный код:
+// 1. Очищает таблицу в Firebase перед началом работы (DELETE запрос).
+// 2. Подключается к Ethereum ноде через Infura.
+// 3. Использует подписку на новые заголовки (SubscribeNewHead) для мгновенной реакции на появление новых блоков.
+// 4. При появлении нового блока загружает весь блок и транзакции в Firebase.
+// 5. В консоль выводит только состояние процесса поиска и подтверждения, что новый блок найден, без деталей блока или транзакций.
+//    Никакой другой информации в консоль не выводится.
+// 6. Блоки должны идти подряд, не пропуская промежуточных.
 
 func main() {
-
 	// 1. Перед началом записи данных отправляем запрос DELETE к Firebase, чтобы очистить таблицу.
 	firebaseURL := "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app/.json"
 	req, err := http.NewRequest("DELETE", firebaseURL, nil)
 	if err != nil {
-		log.Fatal("Error creating request to Firebase:", err)
+		log.Fatal("Ошибка при создании запроса на очистку Firebase:", err)
 	}
 	httpClient := &http.Client{}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Fatal("Error deleting Firebase data:", err)
+		log.Fatal("Ошибка при очистке Firebase:", err)
 	}
 	_ = resp.Body.Close()
 
@@ -115,51 +43,44 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// Выполним примеры, чтобы код из примеров тоже присутствовал (можно вызвать в начале, чтобы продемонстрировать)
-	exampleGetLastBlock()
-	exampleGetBlockByNumber()
-	exampleGetTransactionsFromBlock()
+	// 3. Подписываемся на новые заголовки блоков
+	headersChan := make(chan *types.Header)
+	sub, err := client.SubscribeNewHead(context.Background(), headersChan)
+	if err != nil {
+		log.Fatal("Ошибка при подписке на новые заголовки:", err)
+	}
 
-	// 3. Подписываемся на новые заголовки блоков, чтобы получать новые блоки в реальном времени
-	headers := make(chan *big.Int)
-	go func() {
-		// Эта горутина будет опрашивать последние блоки вручную (polling), чтобы упростить логику.
-		// Альтернативно можно использовать SubscribeNewHead, но иногда проще polling:
-		var lastBlockNumber *big.Int
+	// Выводим минимальную информацию о процессе поиска блоков
+	fmt.Println("Ожидание новых блоков...")
 
-		for {
-			header, err := client.HeaderByNumber(context.Background(), nil)
-			if err != nil {
-				log.Println("Error getting latest header:", err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			if lastBlockNumber == nil || header.Number.Cmp(lastBlockNumber) > 0 {
-				// Новый блок найден
-				headers <- header.Number
-				lastBlockNumber = header.Number
-			}
-			time.Sleep(5 * time.Second) // Пауза между проверками (для реального продакшена можно использовать SubscribeNewHead)
-		}
-	}()
-
+	// Цикл чтения новых заголовков из канала
 	for {
 		select {
-		case blockNumber := <-headers:
-			// Получаем данные блока по номеру
+		case err := <-sub.Err():
+			// Если произошла ошибка в подписке, делаем паузу и пробуем переподключиться.
+			fmt.Println("Ошибка подписки, повторное подключение...")
+			time.Sleep(time.Second * 5)
+			sub, err = client.SubscribeNewHead(context.Background(), headersChan)
+			if err != nil {
+				fmt.Println("Не удалось переподключиться к подписке, ждем и повторяем...")
+				time.Sleep(time.Second * 5)
+				continue
+			}
+			fmt.Println("Переподключение к подписке выполнено. Ожидание новых блоков...")
+
+		case header := <-headersChan:
+			// Получили новый заголовок, выводим только что мы нашли новый блок:
+			fmt.Printf("Найден новый блок: %s\n", header.Number.String())
+
+			// Получаем сам блок по номеру
+			blockNumber := header.Number
 			block, err := client.BlockByNumber(context.Background(), blockNumber)
 			if err != nil {
-				log.Fatal("Error getting block:", err)
+				log.Println("Ошибка при получении блока:", err)
+				continue
 			}
 
-			// Выводим данные блока в консоль (как в примерах)
-			fmt.Println("New Block:", block.Number().Uint64())
-			fmt.Println("Time:", block.Time())
-			fmt.Println("Difficulty:", block.Difficulty().Uint64())
-			fmt.Println("Hash:", block.Hash().Hex())
-			fmt.Println("Transactions count:", len(block.Transactions()))
-
-			// Подготавливаем данные блока для записи в Firebase
+			// Подготавливаем данные для Firebase
 			blockData := map[string]interface{}{
 				"number":            block.Number().Uint64(),
 				"time":              block.Time(),
@@ -175,7 +96,8 @@ func main() {
 			reqBlock.Header.Set("Content-Type", "application/json")
 			respBlock, err := httpClient.Do(reqBlock)
 			if err != nil {
-				log.Fatal("Error writing block to Firebase:", err)
+				log.Println("Ошибка при записи блока в Firebase:", err)
+				continue
 			}
 			_ = respBlock.Body.Close()
 
@@ -205,14 +127,11 @@ func main() {
 				reqTx.Header.Set("Content-Type", "application/json")
 				respTx, err := httpClient.Do(reqTx)
 				if err != nil {
-					log.Fatal("Error writing transaction to Firebase:", err)
+					log.Println("Ошибка при записи транзакции в Firebase:", err)
+					continue
 				}
 				_ = respTx.Body.Close()
 			}
-
-			// Теперь данные о новом блоке и транзакциях записаны в Firebase Realtime Database.
-			// При подключении к этой БД с помощью Firebase SDK на странице веб-приложения,
-			// новые данные будут появляться в реальном времени без перезагрузки страницы.
 		}
 	}
 }
