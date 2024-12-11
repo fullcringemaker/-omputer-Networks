@@ -1,4 +1,4 @@
-go run main.go
-command-line-arguments: open C:\Users\dmitr\AppData\Local\Temp\go-build730413778\b001\exe\main.exe: Operation did not complete successfully because the file contains a virus or potentially unwanted software.
+Read-only and non-realtime mode activated in the data viewer to improve browser performance
+Select a key with fewer records to edit or view in realtime
 
-код постоянно жалуется на библиотеку. помоги исправить ошибку, чтобы код был рабочий и выполнял свое предназначение
+над моей таблицей в Firebase появилось вот такая надпись, и из-за этого, как я понял, она не обновляет данные в таблице а режиме реального времени. покажи и скажи, как мне это исправить
