@@ -1,60 +1,24 @@
 package main
+
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
 	"math/big"
 	"net/http"
 	"time"
 )
+
+// Данные для работы с Infura и Firebase (замените на свои актуальные данные)
 const (
-	infuraURL   = "https://mainnet.infura.io/v3/6dd88c2f98b241eb8e15033618275191"
+	infuraURL   = "https://mainnet.infura.io/v3/8133ff0c11dc491daac3f680d2f74d18"
 	firebaseURL = "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app"
 )
-// JSON-RPC структуры
-type jsonRPCRequest struct {
-	Jsonrpc string        `json:"jsonrpc"`
-	Method  string        `json:"method"`
-	Params  []interface{} `json:"params"`
-	Id      int           `json:"id"`
-}
-type jsonRPCResponseBlock struct {
-	Jsonrpc string          `json:"jsonrpc"`
-	Id      int             `json:"id"`
-	Result  *RPCBlockResult `json:"result"`
-}
-type RPCBlockResult struct {
-	Number           string         `json:"number"`
-	Hash             string         `json:"hash"`
-	Timestamp        string         `json:"timestamp"`
-	Difficulty       string         `json:"difficulty"`
-	Transactions     []RPCTransaction `json:"transactions"`
-}
-type RPCTransaction struct {
-	BlockHash        string `json:"blockHash"`
-	BlockNumber      string `json:"blockNumber"`
-	From             string `json:"from"`
-	Gas              string `json:"gas"`
-	GasPrice         string `json:"gasPrice"`
-	Hash             string `json:"hash"`
-	Input            string `json:"input"`
-	Nonce            string `json:"nonce"`
-	To               string `json:"to"`
-	TransactionIndex string `json:"transactionIndex"`
-	Value            string `json:"value"`
-	V                string `json:"v"`
-	R                string `json:"r"`
-	S                string `json:"s"`
-	// Часть полей опущена за ненадобностью, можно при необходимости добавить
-}
-type jsonRPCResponseLatestBlockNumber struct {
-	Jsonrpc string `json:"jsonrpc"`
-	Id      int    `json:"id"`
-	Result  string `json:"result"`
-}
-// Структуры для записи в Firebase
+
+// Структура данных блока для записи в Firebase
 type BlockData struct {
 	Number     uint64 `json:"number"`
 	Time       uint64 `json:"time"`
@@ -62,6 +26,8 @@ type BlockData struct {
 	Hash       string `json:"hash"`
 	TxCount    int    `json:"txCount"`
 }
+
+// Структура данных транзакции для записи в Firebase
 type TransactionData struct {
 	Hash     string `json:"hash"`
 	Value    string `json:"value"`
@@ -69,53 +35,8 @@ type TransactionData struct {
 	Gas      uint64 `json:"gas"`
 	GasPrice string `json:"gasPrice"`
 }
-// Вспомогательная функция запроса к инфуре
-func callInfura(method string, params []interface{}, result interface{}) error {
-	reqData := jsonRPCRequest{
-		Jsonrpc: "2.0",
-		Method:  method,
-		Params:  params,
-		Id:      1,
-	}
-	reqBytes, err := json.Marshal(reqData)
-	if err != nil {
-		return err
-	}
-	resp, err := http.Post(infuraURL, "application/json", bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return json.NewDecoder(resp.Body).Decode(result)
-}
-// Получить номер последнего блока (hex string -> int64)
-func getLatestBlockNumber() (int64, error) {
-	var response jsonRPCResponseLatestBlockNumber
-	err := callInfura("eth_blockNumber", []interface{}{}, &response)
-	if err != nil {
-		return 0, err
-	}
-	// Номер блока приходит в hex формате, конвертируем
-	num, ok := new(big.Int).SetString(response.Result[2:], 16) // убираем "0x"
-	if !ok {
-		return 0, fmt.Errorf("unable to parse block number")
-	}
-	return num.Int64(), nil
-}
-// Получить данные о блоке по номеру
-func getBlockByNumber(blockNum int64) (*RPCBlockResult, error) {
-	hexNum := fmt.Sprintf("0x%x", blockNum)
-	var response jsonRPCResponseBlock
-	err := callInfura("eth_getBlockByNumber", []interface{}{hexNum, true}, &response)
-	if err != nil {
-		return nil, err
-	}
-	if response.Result == nil {
-		return nil, fmt.Errorf("no block result for %d", blockNum)
-	}
-	return response.Result, nil
-}
-// Записываем данные блока в Firebase
+
+// Функция записи данных блока в Firebase
 func writeBlockToFirebase(blockData BlockData) error {
 	url := fmt.Sprintf("%s/blocks/%d.json", firebaseURL, blockData.Number)
 	bodyBytes, err := json.Marshal(blockData)
@@ -138,7 +59,8 @@ func writeBlockToFirebase(blockData BlockData) error {
 	}
 	return nil
 }
-// Записываем транзакции в Firebase
+
+// Функция записи транзакций в Firebase
 func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) error {
 	url := fmt.Sprintf("%s/blocks/%d/transactions.json", firebaseURL, blockNumber)
 	bodyBytes, err := json.Marshal(txs)
@@ -161,92 +83,184 @@ func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) erro
 	}
 	return nil
 }
-// Вспомогательная функция для парсинга hex чисел
-func hexToUint64(hexStr string) (uint64, error) {
-	num, ok := new(big.Int).SetString(hexStr[2:], 16)
-	if !ok {
-		return 0, fmt.Errorf("unable to parse hex: %s", hexStr)
-	}
-	return num.Uint64(), nil
-}
-func main() {
-	ctx := context.Background()
-	_ = ctx // сейчас не используем контекст активно, но оставим для будущих модификаций
-	// Получаем текущий последний блок при старте
-	latestBlock, err := getLatestBlockNumber()
+
+// Функция очистки базы данных Firebase (удаление старых данных)
+func clearFirebase() error {
+	// Удалим все данные по блокам: DELETE /blocks.json
+	url := fmt.Sprintf("%s/blocks.json", firebaseURL)
+	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
-		log.Fatalln("Error getting latest block number:", err)
+		return err
 	}
+	clientHttp := &http.Client{}
+	resp, err := clientHttp.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("failed to clear firebase data: status code %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Пример получения последнего блока (код из задания, для интеграции)
+func exampleGetLatestBlock() {
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	header, err := client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(header.Number.String()) // Последний блок в блокчейне
+	blockNumber := big.NewInt(header.Number.Int64())
+	block, err := client.BlockByNumber(context.Background(), blockNumber) // получить блок по номеру
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Информация о блоке
+	fmt.Println(block.Number().Uint64())
+	fmt.Println(block.Time())
+	fmt.Println(block.Difficulty().Uint64())
+	fmt.Println(block.Hash().Hex())
+	fmt.Println(len(block.Transactions()))
+}
+
+// Пример получения данных из блока по номеру (код из задания)
+func exampleGetBlockByNumber() {
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	blockNumber := big.NewInt(15960495)
+	block, err := client.BlockByNumber(context.Background(), blockNumber) // получить блок с этим номером
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Информация о блоке
+	fmt.Println(block.Number().Uint64())
+	fmt.Println(block.Time())
+	fmt.Println(block.Difficulty().Uint64())
+	fmt.Println(block.Hash().Hex())
+	fmt.Println(len(block.Transactions()))
+}
+
+// Пример получения данных из транзакций (код из задания)
+func exampleGetTransactionData() {
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	blockNumber := big.NewInt(15960495)
+	block, err := client.BlockByNumber(context.Background(), blockNumber)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, tx := range block.Transactions() {
+		fmt.Println(tx.ChainId())
+		fmt.Println(tx.Hash())
+		fmt.Println(tx.Value())
+		fmt.Println(tx.Cost())
+		fmt.Println(tx.To())
+		fmt.Println(tx.Gas())
+		fmt.Println(tx.GasPrice())
+	}
+}
+
+// Основная функция, реализующая требования мониторинга блоков,
+// удаления старых данных и записи в Firebase
+func main() {
+	// Сначала очищаем таблицу в Firebase
+	if err := clearFirebase(); err != nil {
+		log.Println("Error clearing Firebase data:", err)
+	} else {
+		fmt.Println("Firebase data cleared successfully")
+	}
+
+	// Подключаемся к Infura
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln("Error connecting to Infura:", err)
+	}
+
+	// Получаем текущий последний блок при старте (теперь у нас чистая база)
+	header, err := client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		log.Fatalln("Error getting latest block header:", err)
+	}
+	latestBlock := header.Number.Int64()
 	currentBlock := latestBlock
+
+	// Запускаем цикл мониторинга новых блоков
 	for {
-		// Проверяем, не появились ли новые блоки
-		newLatestBlock, err := getLatestBlockNumber()
+		// Проверяем актуальный последний блок
+		newHeader, err := client.HeaderByNumber(context.Background(), nil)
 		if err != nil {
 			log.Println("Error getting latest block number:", err)
 			time.Sleep(15 * time.Second)
 			continue
 		}
+		newLatestBlock := newHeader.Number.Int64()
+
 		if newLatestBlock > currentBlock {
 			// Обрабатываем новые блоки
 			for bNum := currentBlock + 1; bNum <= newLatestBlock; bNum++ {
-				blockDataRPC, err := getBlockByNumber(bNum)
+				block, err := client.BlockByNumber(context.Background(), big.NewInt(bNum))
 				if err != nil {
 					log.Println("Error fetching block:", err)
 					continue
 				}
-				blockNumber, err := hexToUint64(blockDataRPC.Number)
-				if err != nil {
-					log.Println("Error parsing block number:", err)
-					continue
-				}
-				blockTime, err := hexToUint64(blockDataRPC.Timestamp)
-				if err != nil {
-					log.Println("Error parsing block time:", err)
-					continue
-				}
-				blockDiff, err := hexToUint64(blockDataRPC.Difficulty)
-				if err != nil {
-					log.Println("Error parsing block difficulty:", err)
-					continue
-				}
+
 				bData := BlockData{
-					Number:     blockNumber,
-					Time:       blockTime,
-					Difficulty: blockDiff,
-					Hash:       blockDataRPC.Hash,
-					TxCount:    len(blockDataRPC.Transactions),
+					Number:     block.Number().Uint64(),
+					Time:       block.Time(),
+					Difficulty: block.Difficulty().Uint64(),
+					Hash:       block.Hash().Hex(),
+					TxCount:    len(block.Transactions()),
 				}
+
 				// Запись блока в Firebase
 				if err := writeBlockToFirebase(bData); err != nil {
 					log.Println("Error writing block data to Firebase:", err)
 				} else {
 					fmt.Println("Block data written to Firebase for block:", bData.Number)
 				}
-				// Обрабатываем транзакции
+
+				// Подготовка транзакций к записи в Firebase
 				var txs []TransactionData
-				for _, tx := range blockDataRPC.Transactions {
-					gas, err := hexToUint64(tx.Gas)
-					if err != nil {
-						gas = 0
+				for _, tx := range block.Transactions() {
+					gas := tx.Gas()
+					value := tx.Value().String()
+					gasPrice := tx.GasPrice().String()
+
+					toAddress := ""
+					if tx.To() != nil {
+						toAddress = tx.To().Hex()
 					}
+
 					txData := TransactionData{
-						Hash:     tx.Hash,
-						Value:    tx.Value,
-						To:       tx.To,
+						Hash:     tx.Hash().Hex(),
+						Value:    value,
+						To:       toAddress,
 						Gas:      gas,
-						GasPrice: tx.GasPrice,
+						GasPrice: gasPrice,
 					}
 					txs = append(txs, txData)
 				}
-				// Запись транзакций
-				if err := writeTransactionsToFirebase(blockNumber, txs); err != nil {
+
+				// Запись транзакций в Firebase
+				if err := writeTransactionsToFirebase(block.Number().Uint64(), txs); err != nil {
 					log.Println("Error writing transactions to Firebase:", err)
 				} else {
-					fmt.Println("Transactions data written to Firebase for block:", blockNumber)
+					fmt.Println("Transactions data written to Firebase for block:", block.Number().Uint64())
 				}
 			}
 			currentBlock = newLatestBlock
 		}
+
+		// Ждем 15 секунд перед следующей проверкой
 		time.Sleep(15 * time.Second)
 	}
 }
