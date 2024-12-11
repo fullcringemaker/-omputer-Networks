@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"log"
 	"math/big"
@@ -13,125 +12,234 @@ import (
 	"time"
 )
 
-// Данный код:
-// 1. Очищает таблицу в Firebase перед началом работы (DELETE запрос).
-// 2. Подключается к Ethereum ноде через Infura.
-// 3. Использует подписку на новые заголовки (SubscribeNewHead) для мгновенной реакции на появление новых блоков.
-// 4. При появлении нового блока загружает весь блок и транзакции в Firebase.
-// 5. В консоль выводит только состояние процесса поиска и подтверждения, что новый блок найден, без деталей блока или транзакций.
-//    Никакой другой информации в консоль не выводится.
-// 6. Блоки должны идти подряд, не пропуская промежуточных.
+// Данные для работы с Infura и Firebase (используйте свои данные)
+const (
+	infuraURL   = "https://mainnet.infura.io/v3/8133ff0c11dc491daac3f680d2f74d18"
+	firebaseURL = "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app"
+)
 
-func main() {
-	// 1. Перед началом записи данных отправляем запрос DELETE к Firebase, чтобы очистить таблицу.
-	firebaseURL := "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app/.json"
-	req, err := http.NewRequest("DELETE", firebaseURL, nil)
-	if err != nil {
-		log.Fatal("Ошибка при создании запроса на очистку Firebase:", err)
-	}
-	httpClient := &http.Client{}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Fatal("Ошибка при очистке Firebase:", err)
-	}
-	_ = resp.Body.Close()
+// Структура данных блока для записи в Firebase
+type BlockData struct {
+	Number     uint64 `json:"number"`
+	Time       uint64 `json:"time"`
+	Difficulty uint64 `json:"difficulty"`
+	Hash       string `json:"hash"`
+	TxCount    int    `json:"txCount"`
+}
 
-	// 2. Подключение к Ethereum клиенту через Infura
-	infuraURL := "https://mainnet.infura.io/v3/6dd88c2f98b241eb8e15033618275191"
+// Структура данных транзакции для записи в Firebase
+type TransactionData struct {
+	Hash     string `json:"hash"`
+	Value    string `json:"value"`
+	To       string `json:"to"`
+	Gas      uint64 `json:"gas"`
+	GasPrice string `json:"gasPrice"`
+}
+
+// Функция записи данных блока в Firebase
+func writeBlockToFirebase(blockData BlockData) error {
+	url := fmt.Sprintf("%s/blocks/%d.json", firebaseURL, blockData.Number)
+	bodyBytes, err := json.Marshal(blockData)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	clientHttp := &http.Client{}
+	resp, err := clientHttp.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("failed to write block data to firebase: status code %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// Функция записи транзакций в Firebase
+func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) error {
+	url := fmt.Sprintf("%s/blocks/%d/transactions.json", firebaseURL, blockNumber)
+	bodyBytes, err := json.Marshal(txs)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	clientHttp := &http.Client{}
+	resp, err := clientHttp.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("failed to write transactions data to firebase: status code %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ------------------------------------------
+// Ниже приводятся фрагменты кода, которые должны быть включены и использоваться в программе,
+// как было указано в задании.
+
+// Получение последнего блока (пример кода, будет интегрировано в основную логику)
+func exampleGetLatestBlock() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
 		log.Fatalln(err)
 	}
-
-	// 3. Подписываемся на новые заголовки блоков
-	headersChan := make(chan *types.Header)
-	sub, err := client.SubscribeNewHead(context.Background(), headersChan)
+	header, err := client.HeaderByNumber(context.Background(), nil)
 	if err != nil {
-		log.Fatal("Ошибка при подписке на новые заголовки:", err)
+		log.Fatal(err)
+	}
+	fmt.Println(header.Number.String()) // Последний блок в блокчейне
+	blockNumber := big.NewInt(header.Number.Int64())
+	block, err := client.BlockByNumber(context.Background(), blockNumber) // получить блок по номеру
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Информация о блоке
+	fmt.Println(block.Number().Uint64())
+	fmt.Println(block.Time())
+	fmt.Println(block.Difficulty().Uint64())
+	fmt.Println(block.Hash().Hex())
+	fmt.Println(len(block.Transactions()))
+}
+
+// Получение данных из блока по номеру (пример кода)
+func exampleGetBlockByNumber() {
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	blockNumber := big.NewInt(15960495)
+	block, err := client.BlockByNumber(context.Background(), blockNumber) // получить блок с этим номером
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Информация о блоке
+	fmt.Println(block.Number().Uint64())
+	fmt.Println(block.Time())
+	fmt.Println(block.Difficulty().Uint64())
+	fmt.Println(block.Hash().Hex())
+	fmt.Println(len(block.Transactions()))
+}
+
+// Получение данных из полей транзакции (пример кода)
+func exampleGetTransactionData() {
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	blockNumber := big.NewInt(15960495)
+	block, err := client.BlockByNumber(context.Background(), blockNumber)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, tx := range block.Transactions() {
+		fmt.Println(tx.ChainId())
+		fmt.Println(tx.Hash())
+		fmt.Println(tx.Value())
+		fmt.Println(tx.Cost())
+		fmt.Println(tx.To())
+		fmt.Println(tx.Gas())
+		fmt.Println(tx.GasPrice())
+	}
+}
+
+// ------------------------------------------
+
+// Основная функция, реализующая требования мониторинга блоков и записи в Firebase
+func main() {
+	// Подключаемся к клиенту ethclient (infura)
+	client, err := ethclient.Dial(infuraURL)
+	if err != nil {
+		log.Fatalln("Error connecting to Infura:", err)
 	}
 
-	// Выводим минимальную информацию о процессе поиска блоков
-	fmt.Println("Ожидание новых блоков...")
+	// Получаем текущий последний блок при старте
+	header, err := client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		log.Fatalln("Error getting latest block header:", err)
+	}
+	latestBlock := header.Number.Int64()
+	currentBlock := latestBlock
 
-	// Цикл чтения новых заголовков из канала
+	// Запускаем бесконечный цикл мониторинга новых блоков
 	for {
-		select {
-		case err := <-sub.Err():
-			// Если произошла ошибка в подписке, делаем паузу и пробуем переподключиться.
-			fmt.Println("Ошибка подписки, повторное подключение...")
-			time.Sleep(time.Second * 5)
-			sub, err = client.SubscribeNewHead(context.Background(), headersChan)
-			if err != nil {
-				fmt.Println("Не удалось переподключиться к подписке, ждем и повторяем...")
-				time.Sleep(time.Second * 5)
-				continue
-			}
-			fmt.Println("Переподключение к подписке выполнено. Ожидание новых блоков...")
+		// Проверяем актуальный последний блок
+		newHeader, err := client.HeaderByNumber(context.Background(), nil)
+		if err != nil {
+			log.Println("Error getting latest block number:", err)
+			time.Sleep(15 * time.Second)
+			continue
+		}
+		newLatestBlock := newHeader.Number.Int64()
 
-		case header := <-headersChan:
-			// Получили новый заголовок, выводим только что мы нашли новый блок:
-			fmt.Printf("Найден новый блок: %s\n", header.Number.String())
-
-			// Получаем сам блок по номеру
-			blockNumber := header.Number
-			block, err := client.BlockByNumber(context.Background(), blockNumber)
-			if err != nil {
-				log.Println("Ошибка при получении блока:", err)
-				continue
-			}
-
-			// Подготавливаем данные для Firebase
-			blockData := map[string]interface{}{
-				"number":            block.Number().Uint64(),
-				"time":              block.Time(),
-				"difficulty":        block.Difficulty().Uint64(),
-				"hash":              block.Hash().Hex(),
-				"transactionsCount": len(block.Transactions()),
-			}
-
-			// Записываем данные блока в Firebase
-			blockUrl := fmt.Sprintf("https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app/blocks/%d.json", block.Number().Uint64())
-			blockDataBytes, _ := json.Marshal(blockData)
-			reqBlock, _ := http.NewRequest("PUT", blockUrl, bytes.NewBuffer(blockDataBytes))
-			reqBlock.Header.Set("Content-Type", "application/json")
-			respBlock, err := httpClient.Do(reqBlock)
-			if err != nil {
-				log.Println("Ошибка при записи блока в Firebase:", err)
-				continue
-			}
-			_ = respBlock.Body.Close()
-
-			// Записываем транзакции блока в Firebase
-			for i, tx := range block.Transactions() {
-				toAddr := tx.To()
-				var toStr string
-				if toAddr != nil {
-					toStr = toAddr.Hex()
-				} else {
-					toStr = "nil"
-				}
-
-				txData := map[string]interface{}{
-					"chainId":  tx.ChainId().String(),
-					"hash":     tx.Hash().Hex(),
-					"value":    tx.Value().String(),
-					"cost":     tx.Cost().String(),
-					"to":       toStr,
-					"gas":      tx.Gas(),
-					"gasPrice": tx.GasPrice().String(),
-				}
-
-				txUrl := fmt.Sprintf("https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app/blocks/%d/transactions/%d.json", block.Number().Uint64(), i)
-				txDataBytes, _ := json.Marshal(txData)
-				reqTx, _ := http.NewRequest("PUT", txUrl, bytes.NewBuffer(txDataBytes))
-				reqTx.Header.Set("Content-Type", "application/json")
-				respTx, err := httpClient.Do(reqTx)
+		if newLatestBlock > currentBlock {
+			// Обрабатываем новые блоки
+			for bNum := currentBlock + 1; bNum <= newLatestBlock; bNum++ {
+				block, err := client.BlockByNumber(context.Background(), big.NewInt(bNum))
 				if err != nil {
-					log.Println("Ошибка при записи транзакции в Firebase:", err)
+					log.Println("Error fetching block:", err)
 					continue
 				}
-				_ = respTx.Body.Close()
+
+				bData := BlockData{
+					Number:     block.Number().Uint64(),
+					Time:       block.Time(),
+					Difficulty: block.Difficulty().Uint64(),
+					Hash:       block.Hash().Hex(),
+					TxCount:    len(block.Transactions()),
+				}
+
+				// Запись блока в Firebase
+				if err := writeBlockToFirebase(bData); err != nil {
+					log.Println("Error writing block data to Firebase:", err)
+				} else {
+					fmt.Println("Block data written to Firebase for block:", bData.Number)
+				}
+
+				// Подготовка транзакций к записи в Firebase
+				var txs []TransactionData
+				for _, tx := range block.Transactions() {
+					gas := tx.Gas()
+					// Приводим Value и GasPrice к строке (hex не нужен, можно сразу строковое представление)
+					value := tx.Value().String()
+					gasPrice := tx.GasPrice().String()
+
+					toAddress := ""
+					if tx.To() != nil {
+						toAddress = tx.To().Hex()
+					}
+
+					txData := TransactionData{
+						Hash:     tx.Hash().Hex(),
+						Value:    value,
+						To:       toAddress,
+						Gas:      gas,
+						GasPrice: gasPrice,
+					}
+					txs = append(txs, txData)
+				}
+
+				// Запись транзакций в Firebase
+				if err := writeTransactionsToFirebase(block.Number().Uint64(), txs); err != nil {
+					log.Println("Error writing transactions to Firebase:", err)
+				} else {
+					fmt.Println("Transactions data written to Firebase for block:", block.Number().Uint64())
+				}
 			}
+			currentBlock = newLatestBlock
 		}
+
+		// Ждем 15 секунд перед следующей проверкой
+		time.Sleep(15 * time.Second)
 	}
 }
