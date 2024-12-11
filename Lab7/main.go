@@ -13,7 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-// Данные для работы с Infura и Firebase (замените на свои актуальные данные)
+// Данные для работы с Infura и Firebase
 const (
 	infuraURL   = "https://mainnet.infura.io/v3/8133ff0c11dc491daac3f680d2f74d18"
 	firebaseURL = "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app"
@@ -37,7 +37,7 @@ type TransactionData struct {
 	GasPrice string `json:"gasPrice"`
 }
 
-// Функция записи данных блока в Firebase
+// Запись данных блока в Firebase
 func writeBlockToFirebase(blockData BlockData) error {
 	url := fmt.Sprintf("%s/blocks/%d.json", firebaseURL, blockData.Number)
 	bodyBytes, err := json.Marshal(blockData)
@@ -61,7 +61,7 @@ func writeBlockToFirebase(blockData BlockData) error {
 	return nil
 }
 
-// Функция записи транзакций в Firebase
+// Запись транзакций в Firebase
 func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) error {
 	url := fmt.Sprintf("%s/blocks/%d/transactions.json", firebaseURL, blockNumber)
 	bodyBytes, err := json.Marshal(txs)
@@ -85,9 +85,8 @@ func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) erro
 	return nil
 }
 
-// Функция очистки базы данных Firebase (удаление старых данных)
+// Очистка базы данных Firebase
 func clearFirebase() error {
-	// Удалим все данные по блокам: DELETE /blocks.json
 	url := fmt.Sprintf("%s/blocks.json", firebaseURL)
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
@@ -105,7 +104,7 @@ func clearFirebase() error {
 	return nil
 }
 
-// Пример получения последнего блока (код из задания, для интеграции)
+// Получение последнего блока
 func exampleGetLatestBlock() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -121,7 +120,6 @@ func exampleGetLatestBlock() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Информация о блоке
 	fmt.Println(block.Number().Uint64())
 	fmt.Println(block.Time())
 	fmt.Println(block.Difficulty().Uint64())
@@ -129,7 +127,7 @@ func exampleGetLatestBlock() {
 	fmt.Println(len(block.Transactions()))
 }
 
-// Пример получения данных из блока по номеру (код из задания)
+// Получение данных из блока по номеру
 func exampleGetBlockByNumber() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -140,7 +138,6 @@ func exampleGetBlockByNumber() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Информация о блоке
 	fmt.Println(block.Number().Uint64())
 	fmt.Println(block.Time())
 	fmt.Println(block.Difficulty().Uint64())
@@ -148,7 +145,7 @@ func exampleGetBlockByNumber() {
 	fmt.Println(len(block.Transactions()))
 }
 
-// Пример получения данных из транзакций (код из задания)
+// Получение данных из транзакций
 func exampleGetTransactionData() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -170,33 +167,26 @@ func exampleGetTransactionData() {
 	}
 }
 
-// Основная функция, реализующая требования мониторинга блоков,
-// удаления старых данных и записи в Firebase
 func main() {
-	// Сначала очищаем таблицу в Firebase
+	// Очищение таблицы в Firebase
 	if err := clearFirebase(); err != nil {
 		log.Println("Error clearing Firebase data:", err)
 	} else {
 		fmt.Println("Firebase data cleared successfully")
 	}
-
-	// Подключаемся к Infura
+	// Подключение к Infura
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
 		log.Fatalln("Error connecting to Infura:", err)
 	}
-
-	// Получаем текущий последний блок при старте (теперь у нас чистая база)
+	// Получение текущего последнего блока при старте
 	header, err := client.HeaderByNumber(context.Background(), nil)
 	if err != nil {
 		log.Fatalln("Error getting latest block header:", err)
 	}
 	latestBlock := header.Number.Int64()
 	currentBlock := latestBlock
-
-	// Запускаем цикл мониторинга новых блоков
 	for {
-		// Проверяем актуальный последний блок
 		newHeader, err := client.HeaderByNumber(context.Background(), nil)
 		if err != nil {
 			log.Println("Error getting latest block number:", err)
@@ -204,16 +194,13 @@ func main() {
 			continue
 		}
 		newLatestBlock := newHeader.Number.Int64()
-
 		if newLatestBlock > currentBlock {
-			// Обрабатываем новые блоки
 			for bNum := currentBlock + 1; bNum <= newLatestBlock; bNum++ {
 				block, err := client.BlockByNumber(context.Background(), big.NewInt(bNum))
 				if err != nil {
 					log.Println("Error fetching block:", err)
 					continue
 				}
-
 				bData := BlockData{
 					Number:     block.Number().Uint64(),
 					Time:       block.Time(),
@@ -221,14 +208,12 @@ func main() {
 					Hash:       block.Hash().Hex(),
 					TxCount:    len(block.Transactions()),
 				}
-
 				// Запись блока в Firebase
 				if err := writeBlockToFirebase(bData); err != nil {
 					log.Println("Error writing block data to Firebase:", err)
 				} else {
 					fmt.Println("Block data written to Firebase for block:", bData.Number)
 				}
-
 				// Подготовка транзакций к записи в Firebase
 				var txs []TransactionData
 				for _, tx := range block.Transactions() {
@@ -240,7 +225,6 @@ func main() {
 					if tx.To() != nil {
 						toAddress = tx.To().Hex()
 					}
-
 					txData := TransactionData{
 						Hash:     tx.Hash().Hex(),
 						Value:    value,
@@ -250,7 +234,6 @@ func main() {
 					}
 					txs = append(txs, txData)
 				}
-
 				// Запись транзакций в Firebase
 				if err := writeTransactionsToFirebase(block.Number().Uint64(), txs); err != nil {
 					log.Println("Error writing transactions to Firebase:", err)
@@ -260,8 +243,6 @@ func main() {
 			}
 			currentBlock = newLatestBlock
 		}
-
-		// Ждем 15 секунд перед следующей проверкой
 		time.Sleep(10 * time.Second)
 	}
 }
