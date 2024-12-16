@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Данные для работы с Infura и Firebase (замените на свои актуальные данные)
+// Данные для работы с Infura и Firebase (используйте свои данные)
 const (
 	infuraURL   = "https://mainnet.infura.io/v3/8133ff0c11dc491daac3f680d2f74d18"
 	firebaseURL = "https://etherium-realtime-transactions-default-rtdb.europe-west1.firebasedatabase.app"
@@ -84,27 +84,11 @@ func writeTransactionsToFirebase(blockNumber uint64, txs []TransactionData) erro
 	return nil
 }
 
-// Функция очистки базы данных Firebase (удаление старых данных)
-func clearFirebase() error {
-	// Удалим все данные по блокам: DELETE /blocks.json
-	url := fmt.Sprintf("%s/blocks.json", firebaseURL)
-	req, err := http.NewRequest("DELETE", url, nil)
-	if err != nil {
-		return err
-	}
-	clientHttp := &http.Client{}
-	resp, err := clientHttp.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("failed to clear firebase data: status code %d", resp.StatusCode)
-	}
-	return nil
-}
+// ------------------------------------------
+// Ниже приводятся фрагменты кода, которые должны быть включены и использоваться в программе,
+// как было указано в задании.
 
-// Пример получения последнего блока (код из задания, для интеграции)
+// Получение последнего блока (пример кода, будет интегрировано в основную логику)
 func exampleGetLatestBlock() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -128,7 +112,7 @@ func exampleGetLatestBlock() {
 	fmt.Println(len(block.Transactions()))
 }
 
-// Пример получения данных из блока по номеру (код из задания)
+// Получение данных из блока по номеру (пример кода)
 func exampleGetBlockByNumber() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -147,7 +131,7 @@ func exampleGetBlockByNumber() {
 	fmt.Println(len(block.Transactions()))
 }
 
-// Пример получения данных из транзакций (код из задания)
+// Получение данных из полей транзакции (пример кода)
 func exampleGetTransactionData() {
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
@@ -169,23 +153,17 @@ func exampleGetTransactionData() {
 	}
 }
 
-// Основная функция, реализующая требования мониторинга блоков,
-// удаления старых данных и записи в Firebase
-func main() {
-	// Сначала очищаем таблицу в Firebase
-	if err := clearFirebase(); err != nil {
-		log.Println("Error clearing Firebase data:", err)
-	} else {
-		fmt.Println("Firebase data cleared successfully")
-	}
+// ------------------------------------------
 
-	// Подключаемся к Infura
+// Основная функция, реализующая требования мониторинга блоков и записи в Firebase
+func main() {
+	// Подключаемся к клиенту ethclient (infura)
 	client, err := ethclient.Dial(infuraURL)
 	if err != nil {
 		log.Fatalln("Error connecting to Infura:", err)
 	}
 
-	// Получаем текущий последний блок при старте (теперь у нас чистая база)
+	// Получаем текущий последний блок при старте
 	header, err := client.HeaderByNumber(context.Background(), nil)
 	if err != nil {
 		log.Fatalln("Error getting latest block header:", err)
@@ -193,7 +171,7 @@ func main() {
 	latestBlock := header.Number.Int64()
 	currentBlock := latestBlock
 
-	// Запускаем цикл мониторинга новых блоков
+	// Запускаем бесконечный цикл мониторинга новых блоков
 	for {
 		// Проверяем актуальный последний блок
 		newHeader, err := client.HeaderByNumber(context.Background(), nil)
@@ -232,6 +210,7 @@ func main() {
 				var txs []TransactionData
 				for _, tx := range block.Transactions() {
 					gas := tx.Gas()
+					// Приводим Value и GasPrice к строке (hex не нужен, можно сразу строковое представление)
 					value := tx.Value().String()
 					gasPrice := tx.GasPrice().String()
 
