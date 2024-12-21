@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>POP3 Mail Deleter</title>
+  </head>
+  <body>
+    <h1>Удаление всех писем в почтовом ящике</h1>
+    <button onclick="deleteEmails()">Удалить все письма</button>
+
+    <script>
+      async function deleteEmails() {
+        try {
+          const response = await fetch('/delete-emails', { method: 'POST' });
+          const text = await response.text();
+          alert(text);
+        } catch (err) {
+          console.error(err);
+          alert('Ошибка при удалении писем!');
+        }
+      }
+    </script>
+  </body>
+</html>
