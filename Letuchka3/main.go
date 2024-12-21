@@ -52,7 +52,7 @@ func getMailSubjects() []string {
 			}
 		}
 		if subject == "" {
-			subject = "(без темы)"
+			subject = "(no topic)"
 		}
 		subjects = append(subjects, subject)
 	}
