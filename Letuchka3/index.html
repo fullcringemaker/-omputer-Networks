@@ -5,9 +5,9 @@
     <title>POP3</title>
 </head>
 <body>
-    <h1>Список писем</h1>
+    <h1>List of letters</h1>
     <div id="mails"></div>
-    <button id="deleteBtn">Удалить все</button>
+    <button id="deleteBtn">Delete all</button>
     <script>
     async function loadMails() {
       let resp = await fetch('/api/messages')
@@ -23,7 +23,7 @@
     async function deleteAll() {
       await fetch('/api/deleteAll', {method:'POST'})
       loadMails()
-      alert('Все письма удалены.')
+      alert('All letters have been deleted.')
     }
     document.getElementById('deleteBtn').addEventListener('click', deleteAll)
     loadMails()
