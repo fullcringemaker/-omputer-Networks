@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Калькулятор квадрата числа</title>
+    <script>
+        let socket;
+
+        function startWebSocket() {
+            socket = new WebSocket("ws://185.102.139.168:9742/ws");
+
+            socket.onopen = function() {
+                console.log("Соединение установлено");
+            };
+
+            socket.onmessage = function(event) {
+                document.getElementById("output").innerText = "Результат: " + event.data;
+            };
+
+            socket.onerror = function(error) {
+                console.error("Ошибка WebSocket: " + error);
+            };
+
+            socket.onclose = function() {
+                console.log("Соединение закрыто");
+            };
+        }
+
+        function sendValue() {
+            let input = document.getElementById("input").value;
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(input);
+            } else {
+                alert("Ошибка соединения с сервером!");
+            }
+        }
+
+        window.onload = startWebSocket;
+    </script>
+</head>
+<body>
+    <h1>Ввод число для возведения в квадрат</h1>
+    <input type="text" id="input" oninput="sendValue()">
+    <p id="output">Результат: </p>
+</body>
+</html>
